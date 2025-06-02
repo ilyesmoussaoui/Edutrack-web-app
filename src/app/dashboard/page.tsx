@@ -4,22 +4,20 @@
 import React, { useEffect, useState, useMemo, type ChangeEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { onAuthStateChanged, signOut, type User as FirebaseUser } from 'firebase/auth';
-import { doc, getDoc, collectionGroup, query, where, onSnapshot, collection, serverTimestamp, setDoc, Timestamp, orderBy, getDocs } from 'firebase/firestore';
-// Removed: import { ref, uploadBytesResumable, getDownloadURL, type StorageError } from "firebase/storage";
-import { auth, db } from '@/lib/firebase'; // Removed storage
+import { doc, getDoc, collectionGroup, query, where, onSnapshot, collection, serverTimestamp, setDoc, Timestamp, orderBy, getDocs, deleteDoc } from 'firebase/firestore';
+import { auth, db } from '@/lib/firebase'; 
 import { AppHeader } from '@/components/layout/app-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogClose, DialogFooter } from "@/components/ui/dialog";
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Loader2, AlertTriangle, LogOut, CalendarDays, ChevronLeft, ChevronRight, Info } from 'lucide-react'; // Removed UploadCloud, ImageIcon, Trash2
+import { Loader2, AlertTriangle, LogOut, CalendarDays, ChevronLeft, ChevronRight, Info } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
-// Removed: import Image from 'next/image';
 
 
 interface UserData {
@@ -53,7 +51,6 @@ interface StudentAttendanceUIState {
   studentName: string;
   status: 'Present' | 'Absent' | 'AbsentWithJustification' | '';
   justificationNote: string;
-  // Removed image related fields
   originalRecordExists: boolean; 
 }
 
@@ -67,7 +64,6 @@ interface AttendanceRecord {
   timeSlot: string;
   status: 'Present' | 'Absent' | 'AbsentWithJustification';
   justificationNote?: string;
-  // Removed justificationImageUrl
   timestamp: Timestamp; 
 }
 
@@ -100,7 +96,8 @@ const getDateForDayInWeek = (startDate: Date, dayName: string): Date => {
 const formatDateRange = (startDate: Date): string => {
   const endDate = new Date(startDate);
   endDate.setDate(startDate.getDate() + 6); 
-  return `${startDate.toLocaleDateString()} - ${endDate.toLocaleDateString()}`;
+  const options: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric' };
+  return `${startDate.toLocaleDateString(undefined, options)} - ${endDate.toLocaleDateString(undefined, options)}, ${startDate.getFullYear()}`;
 };
 
 
@@ -131,6 +128,8 @@ export default function DashboardPage() {
   const [studentAttendanceStates, setStudentAttendanceStates] = useState<Map<string, StudentAttendanceUIState>>(new Map());
   const [isSavingAttendance, setIsSavingAttendance] = useState(false);
   const [currentClassInstanceId, setCurrentClassInstanceId] = useState<string | null>(null);
+  
+  const [myAttendanceForSelectedSlot, setMyAttendanceForSelectedSlot] = useState<AttendanceRecord | null | 'loading' | 'not_recorded'>('not_recorded');
 
 
   useEffect(() => {
@@ -198,7 +197,7 @@ export default function DashboardPage() {
         });
         setTeacherSchedule(newSchedule);
         
-        if (!hasAssignments && !isLoadingUser && !error) { 
+        if (!hasAssignments && !isLoadingUser && !error && userData?.role === 'Teacher') { 
             setDisplayMessage('You have no classes in your recurring schedule, or please wait for admin assignment.');
         } else if (hasAssignments) {
             setDisplayMessage(null); 
@@ -237,7 +236,7 @@ export default function DashboardPage() {
         });
         setStudentSchedule(newSchedule);
 
-        if (!groupHasSchedule && !isLoadingUser && !error) {
+        if (!groupHasSchedule && !isLoadingUser && !error && userData?.role === 'Student' && userData.assignedGroupId) {
             setDisplayMessage('Your assigned group currently has no schedule. Please check back later or contact an admin.');
         } else if (groupHasSchedule) {
             setDisplayMessage(null);
@@ -291,7 +290,7 @@ export default function DashboardPage() {
     const classInstanceIdGenerated = `${slotData.groupId}_${slotData.day}_${slotData.time.replace(/[\s:-]/g, '')}_${actualDate.getFullYear()}${(actualDate.getMonth() + 1).toString().padStart(2, '0')}${actualDate.getDate().toString().padStart(2, '0')}`;
     setCurrentClassInstanceId(classInstanceIdGenerated);
 
-    if (userData?.role === 'Teacher') {
+    if (userData?.role === 'Teacher' && currentUser) {
       setIsLoadingStudentsForModal(true);
       setStudentsForModal([]);
       setStudentAttendanceStates(new Map());
@@ -331,6 +330,22 @@ export default function DashboardPage() {
       } finally {
         setIsLoadingStudentsForModal(false);
       }
+    } else if (userData?.role === 'Student' && currentUser) {
+        setMyAttendanceForSelectedSlot('loading');
+        try {
+            const attendanceDocId = `${classInstanceIdGenerated}_${currentUser.uid}`;
+            const attendanceDocRef = doc(db, "attendances", attendanceDocId);
+            const docSnap = await getDoc(attendanceDocRef);
+            if (docSnap.exists()) {
+                setMyAttendanceForSelectedSlot(docSnap.data() as AttendanceRecord);
+            } else {
+                setMyAttendanceForSelectedSlot('not_recorded');
+            }
+        } catch (err) {
+            console.error("Error fetching student's attendance record:", err);
+            toast({variant: "destructive", title: "Attendance Error", description: "Could not load your attendance status."});
+            setMyAttendanceForSelectedSlot('not_recorded'); // or some error state
+        }
     }
     setShowClassDetailsModal(true);
   };
@@ -340,7 +355,7 @@ export default function DashboardPage() {
       const newState = new Map(prev);
       const studentState = newState.get(studentId);
       if (studentState) {
-        newState.set(studentId, { ...studentState, status });
+        newState.set(studentId, { ...studentState, status, justificationNote: status !== 'AbsentWithJustification' ? '' : studentState.justificationNote });
       }
       return newState;
     });
@@ -370,7 +385,7 @@ export default function DashboardPage() {
             const attendanceDocId = `${currentClassInstanceId}_${studentState.studentId}`;
             const attendanceDocRef = doc(db, "attendances", attendanceDocId);
             
-            const recordData: Partial<AttendanceRecord> = {
+            const recordData: Omit<AttendanceRecord, 'timestamp'> & { timestamp?: any } = {
                 studentId: studentState.studentId,
                 classInstanceId: currentClassInstanceId,
                 groupId: selectedClassSlotDetails.groupId,
@@ -382,11 +397,7 @@ export default function DashboardPage() {
             };
 
             if (studentState.status === 'AbsentWithJustification') {
-                recordData.justificationNote = studentState.justificationNote;
-            } else {
-                // Ensure justificationNote is removed if status is not AbsentWithJustification
-                // by setting it to undefined, which Firestore can then remove if merging.
-                recordData.justificationNote = undefined; 
+                recordData.justificationNote = studentState.justificationNote.trim();
             }
             
             await setDoc(attendanceDocRef, { ...recordData, timestamp: serverTimestamp() }, { merge: true });
@@ -523,10 +534,14 @@ export default function DashboardPage() {
           <Dialog open={showClassDetailsModal} onOpenChange={setShowClassDetailsModal}>
             <DialogContent className="sm:max-w-2xl max-h-[90vh] flex flex-col">
               <DialogHeader>
-                <DialogTitle>Class Details & Attendance</DialogTitle>
-                <DialogDescription>
-                  {selectedClassSlotDetails.moduleName} - {userData?.role === 'Teacher' ? selectedClassSlotDetails.groupName : `Taught by ${selectedClassSlotDetails.teacherName}`} <br/>
-                  {selectedClassActualDate?.toLocaleDateString()} at {selectedClassSlotDetails.time} in {selectedClassSlotDetails.roomHall}
+                <DialogTitle>Class Details</DialogTitle>
+                 <DialogDescription>
+                  {selectedClassSlotDetails.moduleName} 
+                  {userData?.role === 'Teacher' && ` - Group: ${selectedClassSlotDetails.groupName}`}
+                  {userData?.role === 'Student' && ` - Teacher: ${selectedClassSlotDetails.teacherName}`}
+                  <br/>
+                  Date: {selectedClassActualDate?.toLocaleDateString()} at {selectedClassSlotDetails.time} <br/>
+                  Location: {selectedClassSlotDetails.roomHall}
                 </DialogDescription>
               </DialogHeader>
               
@@ -544,7 +559,7 @@ export default function DashboardPage() {
                         <RadioGroup 
                           value={attendanceState.status} 
                           onValueChange={(value) => handleAttendanceStatusChange(student.uid, value as StudentAttendanceUIState['status'])}
-                          className="flex space-x-4 mb-2"
+                          className="flex flex-wrap space-x-4 mb-2"
                           disabled={isSavingAttendance}
                         >
                           <div className="flex items-center space-x-2"><RadioGroupItem value="Present" id={`${student.uid}-present`} /><Label htmlFor={`${student.uid}-present`}>Present</Label></div>
@@ -554,11 +569,14 @@ export default function DashboardPage() {
                         
                         {attendanceState.status === 'AbsentWithJustification' && (
                           <div className="space-y-3 mt-3 pt-3 border-t">
+                            <Label htmlFor={`${student.uid}-justification-note`}>Justification Note</Label>
                             <Textarea 
-                              placeholder="Justification note..." 
+                              id={`${student.uid}-justification-note`}
+                              placeholder="Reason for absence..." 
                               value={attendanceState.justificationNote}
                               onChange={(e) => handleJustificationNoteChange(student.uid, e.target.value)}
                               disabled={isSavingAttendance}
+                              rows={2}
                             />
                           </div>
                         )}
@@ -570,18 +588,34 @@ export default function DashboardPage() {
               )}
 
               {userData?.role === 'Student' && (
-                 <div className="space-y-3 py-4 text-sm">
-                    <p><strong>Module:</strong> {selectedClassSlotDetails.moduleName}</p>
-                    <p><strong>Teacher:</strong> {selectedClassSlotDetails.teacherName}</p>
-                    <p><strong>Room/Hall:</strong> {selectedClassSlotDetails.roomHall}</p>
-                    <p><strong>Date:</strong> {selectedClassActualDate?.toLocaleDateString()}</p>
-                    <p><strong>Time:</strong> {selectedClassSlotDetails.time}</p>
+                 <div className="space-y-3 py-4 text-sm border-t mt-4">
+                    <h3 className="font-semibold text-base text-foreground">Your Attendance Status</h3>
+                    {myAttendanceForSelectedSlot === 'loading' && (
+                        <div className="flex items-center text-muted-foreground"><Loader2 className="mr-2 h-4 w-4 animate-spin" />Loading your attendance...</div>
+                    )}
+                    {myAttendanceForSelectedSlot === 'not_recorded' && (
+                        <p className="text-muted-foreground">Your attendance for this class has not been recorded yet.</p>
+                    )}
+                    {myAttendanceForSelectedSlot && typeof myAttendanceForSelectedSlot === 'object' && (
+                        <div className="space-y-1">
+                            <p><strong>Student:</strong> {userData.fullName}</p>
+                            <p><strong>Status:</strong> <span className={cn(
+                                myAttendanceForSelectedSlot.status === 'Present' && 'text-green-600',
+                                myAttendanceForSelectedSlot.status === 'Absent' && 'text-red-600',
+                                myAttendanceForSelectedSlot.status === 'AbsentWithJustification' && 'text-orange-600',
+                                'font-medium'
+                            )}>{myAttendanceForSelectedSlot.status.replace(/([A-Z])/g, ' $1').trim()}</span></p>
+                            {myAttendanceForSelectedSlot.status === 'AbsentWithJustification' && myAttendanceForSelectedSlot.justificationNote && (
+                                <p><strong>Justification:</strong> {myAttendanceForSelectedSlot.justificationNote}</p>
+                            )}
+                        </div>
+                    )}
                 </div>
               )}
               
               <DialogFooter className="mt-auto pt-4 border-t">
                 <DialogClose asChild>
-                  <Button type="button" variant="outline" disabled={isSavingAttendance}>Cancel</Button>
+                  <Button type="button" variant="outline" disabled={isSavingAttendance}>Close</Button>
                 </DialogClose>
                 {userData?.role === 'Teacher' && studentsForModal.length > 0 && (
                   <Button onClick={handleSaveAttendance} disabled={isSavingAttendance || isLoadingStudentsForModal || studentAttendanceStates.size === 0}>
@@ -599,3 +633,4 @@ export default function DashboardPage() {
     </div>
   );
 }
+

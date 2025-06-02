@@ -1,39 +1,36 @@
-
 rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Admin user can read/write 'departments'
-    match /departments/{departmentId} {
-      allow read, write: if request.auth != null && request.auth.uid == 'YOUR_ADMIN_UID_HERE';
-    }
 
-    // Users can create their own user document
-    // Users can read their own user document
-    // Admin can read/update any user document (useful for admin panel)
+    // Users Collection
+    // - Allow users to create their own document upon sign-up.
+    // - Allow authenticated users to read their own document.
+    // - Allow authenticated users to update their own document (e.g. profile changes).
+    // - Allow admins to read/write any user document.
     match /users/{userId} {
-      allow create: if request.auth != null && request.auth.uid == userId;
-      allow read: if request.auth != null && (request.auth.uid == userId || request.auth.uid == 'YOUR_ADMIN_UID_HERE');
-      allow update: if request.auth != null && (request.auth.uid == userId || request.auth.uid == 'YOUR_ADMIN_UID_HERE'); // User can update their own, admin can update any
-      // Admin should be able to delete users if needed
-      allow delete: if request.auth != null && request.auth.uid == 'YOUR_ADMIN_UID_HERE';
+      allow create: if request.auth.uid == userId;
+      allow read, update: if request.auth.uid == userId;
+      allow read, write: if request.auth.uid == 'YOUR_ADMIN_UID_HERE'; // Replace with actual Admin UID
     }
 
-    // Rules for the 'groups' collection
-    // Allow authenticated users to read groups (for teachers to check assignments, students to see group info if needed)
-    // Allow admin to create, update, delete groups
-    match /groups/{groupId} {
-      allow read: if request.auth != null;
-      allow create, update, delete: if request.auth != null && request.auth.uid == 'YOUR_ADMIN_UID_HERE';
+    // Departments Collection & Subcollections (Years, Specialities, Groups, Schedule)
+    // - Allow admins to read/write anything within departments and all their nested subcollections.
+    match /departments/{departmentId}/{documents=**} {
+      allow read, write: if request.auth.uid == 'YOUR_ADMIN_UID_HERE'; // Replace with actual Admin UID
     }
     
-    match /groups/{groupId}/schedule/{scheduleId} {
-       allow read: if request.auth != null;
-       allow create, update, delete: if request.auth != null && request.auth.uid == 'YOUR_ADMIN_UID_HERE';
+    // Rule for the 'schedule' subcollection (can be nested under any group)
+    // This allows teachers to read schedule slots assigned to them for their dashboard.
+    match /{path=**}/schedule/{slotId} {
+      // Allow authenticated users to read schedule slots if their UID matches the teacherId in the slot
+      allow read: if request.auth.uid != null && request.auth.uid == resource.data.teacherId;
+      // Allow admins to read/write all schedule slots (covered by the /departments/{departmentId}/{documents=**} rule if schedule is always nested there,
+      // but this specific rule is good for collectionGroup queries if schedule could exist elsewhere or for clarity)
+      allow read, write: if request.auth.uid == 'YOUR_ADMIN_UID_HERE'; // Replace with actual Admin UID
     }
 
-
-    // Default deny all other access to unspecified collections/documents
+    // Fallback: Deny all other reads/writes by default
     match /{document=**} {
       allow read, write: if false;
     }

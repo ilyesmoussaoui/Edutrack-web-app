@@ -28,6 +28,7 @@ interface ScheduleSlotData {
   teacherName: string;
   roomHall: string;
   groupId: string;
+  groupName: string;
 }
 
 interface ScheduleSlotDocument extends ScheduleSlotData {
@@ -263,6 +264,7 @@ export default function ProgramManagementPage() {
       moduleName: modalModuleName.trim(),
       roomHall: modalRoomHall.trim(),
       groupId: selectedGroupDetails.id,
+      groupName: selectedGroupDetails.name,
     };
 
     try {
@@ -459,6 +461,8 @@ export default function ProgramManagementPage() {
     </div>
   );
 }
+    
+
     
 
     

@@ -4,7 +4,7 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Function to check if the user is an Admin
+    // Helper function to check if the user is an admin
     function isAdmin() {
       // UID for the admin user
       return request.auth.uid == 'DP9s4PczVeOYuzRX7bznXe0Q1x03';
@@ -12,74 +12,75 @@ service cloud.firestore {
 
     // Rules for the 'users' collection
     match /users/{userId} {
-      // Allow users to create their own profile
-      allow create: if request.auth.uid == userId;
-      // Allow authenticated users to read profiles (e.g., for names, roles)
-      // Allow admins to read any user profile
-      // Allow teachers to read student profiles if they are in the same group
-      allow read: if request.auth != null; // General read access for logged-in users for now
-      // Allow users to update their own profile, admins to update any
-      allow update: if request.auth.uid == userId || isAdmin();
-      // Allow admins to delete users (cautiously)
-      allow delete: if isAdmin();
+      // Allow admin to do anything
+      // Allow authenticated users to read any profile
+      // Allow users to create their own profile upon signup
+      // Allow users to update their own profile (e.g. assignedGroupId by admin, or future profile edits by user)
+      // Disallow deletion of user documents by clients for now
+      allow read: if isAdmin() || request.auth != null;
+      allow create: if request.auth.uid == userId; // User can create their own doc
+      allow update: if isAdmin() || request.auth.uid == userId; // Admin or user themselves can update
+      allow delete: if isAdmin(); // Only admin can delete
     }
 
     // Rules for 'departments' and its subcollections
     match /departments/{departmentId} {
-      allow read: if request.auth != null;
-      allow write: if isAdmin(); // Create, Update, Delete
+      allow read: if isAdmin() || request.auth != null; // All authenticated users can read
+      allow write: if isAdmin(); // Create, Update, Delete only by admin
 
       match /years/{yearId} {
-        allow read: if request.auth != null;
+        allow read: if isAdmin() || request.auth != null;
         allow write: if isAdmin();
 
         match /specialities/{specialityId} {
-          allow read: if request.auth != null;
+          allow read: if isAdmin() || request.auth != null;
           allow write: if isAdmin();
 
           match /groups/{groupId} {
-            allow read: if request.auth != null;
+            allow read: if isAdmin() || request.auth != null;
             allow write: if isAdmin();
 
-            // Schedule subcollection within each group
-            // This specific path rule is fine, but the collectionGroup rule below is more general for admin reads.
+            // Schedule documents within a group
+            // This specific path is now largely covered by the collectionGroup rule for 'schedule' below,
+            // but kept for explicitness if needed for path-specific, non-collectionGroup queries.
             match /schedule/{scheduleId} {
               allow read: if isAdmin() ||
                            request.auth.uid == resource.data.teacherId ||
                            (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
                            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'Student' &&
                            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.assignedGroupId == resource.data.groupId);
-
-              allow write: if isAdmin() || request.auth.uid == resource.data.teacherId; // Admin or assigned teacher can write
-              allow delete: if isAdmin() || request.auth.uid == resource.data.teacherId;
+              allow write: if isAdmin();
             }
           }
         }
       }
     }
 
-    // Explicit rule for 'schedule' collection group for admin reads
-    // This helps with collectionGroup queries made by admins.
+    // Rules for schedule sub-collections (used by collectionGroup queries)
     match /{path=**}/schedule/{scheduleDocId} {
-      allow read: if isAdmin();
-      // Note: Write access to 'schedule' via collectionGroup is generally not recommended
-      // unless very specific conditions are met, as it bypasses parent document checks.
-      // Writes are handled by the more specific path rule above.
+      allow read: if isAdmin() || // Admin can read all schedule docs
+                   request.auth.uid == resource.data.teacherId || // Teacher can read their assigned slots
+                   (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && // Student can read their group's schedule
+                   get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'Student' &&
+                   get(/databases/$(database)/documents/users/$(request.auth.uid)).data.assignedGroupId == resource.data.groupId);
+      allow write: if isAdmin(); // Admin can write/update any schedule doc
     }
-
+    
     // Rules for the 'attendances' collection
     match /attendances/{attendanceId} {
+      // Admin can do anything
+      // Teacher can create records for their classes (teacherId on record must match their UID)
+      // Teacher can read records for their classes
+      // Teacher can update records for their classes
+      // Student can read their own attendance records
       allow read: if isAdmin() ||
                      request.auth.uid == resource.data.teacherId ||
                      request.auth.uid == resource.data.studentId;
-      allow create, update: if isAdmin() || request.auth.uid == resource.data.teacherId;
+      allow create: if isAdmin() || 
+                       (request.auth.uid == request.resource.data.teacherId); // Teacher creating the record must be the one assigned
+      allow update: if isAdmin() ||
+                       (request.auth.uid == resource.data.teacherId); // Only the teacher who took attendance or admin can update
       allow delete: if isAdmin();
-    }
-
-    // Allow read access to the 'config/userRoles' document for all authenticated users
-    match /config/userRoles {
-      allow read: if request.auth != null;
-      allow write: if isAdmin(); // Only admins can write roles
     }
   }
 }

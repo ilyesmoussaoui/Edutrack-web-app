@@ -1,21 +1,156 @@
 
+"use client";
+
+import React, { useState, useEffect, useCallback } from 'react';
+import { collection, query, where, orderBy, onSnapshot, getDocs, collectionGroup, type Timestamp } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card';
-import { UserCog } from 'lucide-react';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Loader2, UserCog, Circle, AlertTriangle } from 'lucide-react';
+import { useToast } from "@/hooks/use-toast";
+import { cn } from '@/lib/utils';
+
+interface Teacher {
+  uid: string;
+  fullName: string;
+  email: string;
+  role: string;
+  createdAt?: Timestamp;
+}
+
+interface ScheduleSlot {
+  day: string;
+  time: string;
+  subject: string;
+  teacherId?: string;
+}
+
+interface GroupData {
+  id: string;
+  name: string;
+  scheduleTemplate?: ScheduleSlot[];
+}
 
 export default function TeachersPage() {
+  const [teachers, setTeachers] = useState<Teacher[]>([]);
+  const [assignedTeacherIds, setAssignedTeacherIds] = useState<Set<string>>(new Set());
+  const [isLoadingTeachers, setIsLoadingTeachers] = useState(true);
+  const [isLoadingAssignments, setIsLoadingAssignments] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const { toast } = useToast();
+
+  useEffect(() => {
+    setIsLoadingTeachers(true);
+    const teachersQuery = query(
+      collection(db, "users"),
+      where("role", "==", "Teacher"),
+      orderBy("createdAt", "desc")
+    );
+
+    const unsubscribe = onSnapshot(teachersQuery, (snapshot) => {
+      const fetchedTeachers: Teacher[] = [];
+      snapshot.forEach((doc) => {
+        fetchedTeachers.push({ uid: doc.id, ...doc.data() } as Teacher);
+      });
+      setTeachers(fetchedTeachers);
+      setIsLoadingTeachers(false);
+      setError(null);
+    }, (err) => {
+      console.error("Error fetching teachers:", err);
+      setError("Failed to fetch teachers.");
+      setIsLoadingTeachers(false);
+      toast({ variant: "destructive", title: "Error", description: "Could not fetch teachers." });
+    });
+
+    return () => unsubscribe();
+  }, [toast]);
+
+  useEffect(() => {
+    const fetchAssignments = async () => {
+      setIsLoadingAssignments(true);
+      const currentAssignedIds = new Set<string>();
+      try {
+        // Query all 'groups' subcollections across all departments, years, and specialities
+        const groupsQuery = query(collectionGroup(db, 'groups'));
+        const groupsSnapshot = await getDocs(groupsQuery);
+        
+        groupsSnapshot.forEach(groupDoc => {
+          const groupData = groupDoc.data() as Partial<Omit<GroupData, 'id'>>;
+          if (groupData.scheduleTemplate && Array.isArray(groupData.scheduleTemplate)) {
+            groupData.scheduleTemplate.forEach((slot: ScheduleSlot) => {
+              if (slot.teacherId) {
+                currentAssignedIds.add(slot.teacherId);
+              }
+            });
+          }
+        });
+        setAssignedTeacherIds(currentAssignedIds);
+      } catch (err: any) {
+        console.error("Error fetching assignments:", err);
+        setError("Failed to load teacher assignment statuses. " + err.message);
+        toast({ variant: "destructive", title: "Assignment Status Error", description: "Could not load teacher assignment statuses."});
+      } finally {
+        setIsLoadingAssignments(false);
+      }
+    };
+    fetchAssignments();
+  }, [toast]);
+
+  const isLoading = isLoadingTeachers || isLoadingAssignments;
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center">
-          <UserCog className="mr-2 h-6 w-6 text-primary" />
-          Manage Teachers
-        </CardTitle>
-        <CardDescription>Administer teacher profiles, assign them to classes, and manage their schedules.</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <p>This section will allow you to manage teacher accounts, view their details, and assign them to teach specific classes or programs.</p>
-        {/* Placeholder for teacher management UI */}
-      </CardContent>
-    </Card>
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center"><UserCog className="mr-2 h-6 w-6 text-primary" />Manage Teachers</CardTitle>
+          <CardDescription>View registered teachers and their assignment status.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="mr-2 h-8 w-8 animate-spin text-primary" />
+              <p className="text-muted-foreground">Loading teachers and assignments...</p>
+            </div>
+          ) : error ? (
+            <div className="mb-4 p-3 bg-destructive/10 border border-destructive text-destructive rounded-md flex items-center">
+              <AlertTriangle className="mr-2 h-5 w-5"/>
+              <p>{error}</p>
+            </div>
+          ) : teachers.length === 0 ? (
+            <p className="text-muted-foreground text-center py-4">No teachers found.</p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-[80px]">Status</TableHead>
+                  <TableHead>Full Name</TableHead>
+                  <TableHead>Email</TableHead>
+                  {/* Add actions column if needed later */}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {teachers.map((teacher) => (
+                  <TableRow key={teacher.uid}>
+                    <TableCell>
+                      <Circle 
+                        className={cn(
+                          "h-4 w-4", 
+                          assignedTeacherIds.has(teacher.uid) 
+                            ? "fill-green-500 text-green-500" 
+                            : "fill-muted-foreground/50 text-muted-foreground/50"
+                        )} 
+                        title={assignedTeacherIds.has(teacher.uid) ? "Assigned to classes" : "Not yet assigned to classes"}
+                      />
+                    </TableCell>
+                    <TableCell className="font-medium">{teacher.fullName}</TableCell>
+                    <TableCell>{teacher.email}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 }

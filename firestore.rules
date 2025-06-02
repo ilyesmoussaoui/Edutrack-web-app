@@ -3,58 +3,67 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // Admin user - replace YOUR_ADMIN_UID_HERE with the actual admin UID
-    // This user has full read/write access to all collections for setup and management.
-    // Ensure this UID is for a user with an 'Admin' role if you implement role-based access in your app logic.
+
     function isAdmin() {
-      return request.auth != null && request.auth.uid == "uHj990y6lKXrGvP3G0v15bTjR9o1"; // !!! REPLACE WITH YOUR ADMIN UID !!!
+      // IMPORTANT: Ensure 'YOUR_ADMIN_UID_HERE' is replaced with your actual Admin User ID
+      return request.auth.uid == 'YOUR_ADMIN_UID_HERE';
     }
 
-    // Users Collection
-    // - Users can create their own user document on signup.
-    // - Users can read their own document.
-    // - Users can update their own document (e.g., profile changes, assignedGroupId by admin).
-    // - Admins can read/write all user documents.
-    // - Teachers can read student documents (e.g. to list students in a group for attendance)
+    // Explicit rule for admin to read any 'schedule' document via collectionGroup queries.
+    // This is primarily for admin functionalities like the teacher assignment status check.
+    match /{path=**}/schedule/{scheduleDocId} {
+      allow read: if isAdmin();
+      // Write access and more specific reads for other roles (teachers, students)
+      // are handled by the more specific, nested rule for '/departments/.../schedule/{scheduleId}'.
+      // No write rule is defined here to keep it read-only for the collection group at this general level
+      // unless explicitly granted elsewhere for specific paths or roles.
+    }
+
     match /users/{userId} {
-      allow create: if request.auth != null && request.auth.uid == userId;
-      allow read: if request.auth != null && (request.auth.uid == userId || isAdmin() || (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'Teacher'));
-      allow update: if request.auth != null && (request.auth.uid == userId || isAdmin());
+      allow read: if request.auth != null;
+      allow create: if request.auth.uid == userId;
+      allow update: if request.auth.uid == userId || isAdmin();
       allow delete: if isAdmin();
     }
 
-    // Departments Collection (and its subcollections for Years, Specialities, Groups, Schedule)
-    // - Admins can manage all aspects of departments and their nested structures.
-    // - Authenticated users (Teachers/Students) might need read access for specific parts (e.g., group schedule).
-    match /departments/{departmentId}/{document=**} {
-      allow read, write: if isAdmin();
-      // Add more granular read rules for non-admins if needed elsewhere in the app
-    }
-    
-    // Schedule Collection Group (for fetching schedules across all groups)
-    // - Teachers can read schedule slots assigned to them.
-    // - Students can read schedule slots for their assigned group.
-    // - Admins can read all.
-    match /{path=**}/schedule/{scheduleSlotId} {
-      allow read: if isAdmin() || 
-                     (request.auth != null && resource.data.teacherId == request.auth.uid) ||
-                     (request.auth != null && resource.data.groupId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.assignedGroupId);
-      allow write: if isAdmin(); // Only admins manage schedule templates directly
+    match /departments/{departmentId} {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
+
+      match /years/{yearId} {
+        allow read: if request.auth != null;
+        allow write: if isAdmin();
+
+        match /specialities/{specialityId} {
+          allow read: if request.auth != null;
+          allow write: if isAdmin();
+
+          match /groups/{groupId} {
+            allow read: if request.auth != null;
+            allow write: if isAdmin();
+
+            match /schedule/{scheduleId} {
+              // Specific rules for schedule documents at their full path.
+              // Admin read is covered by the collectionGroup rule above for broader queries.
+              // Teacher and Student specific reads:
+              allow read: if request.auth.uid == resource.data.teacherId ||
+                           (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+                           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'Student' &&
+                           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.assignedGroupId == resource.data.groupId) ||
+                           isAdmin(); // Also allow admin read via specific path if needed elsewhere.
+              allow write: if isAdmin(); // Only admin can write to schedules directly via this path.
+            }
+          }
+        }
+      }
     }
 
-    // Attendances Collection
-    // - Teachers can create/read/update attendance for their classes.
-    // - Students can read their own attendance.
-    // - Admins can read/write all.
     match /attendances/{attendanceId} {
-      allow create: if request.auth != null && request.resource.data.teacherId == request.auth.uid;
-      allow read: if isAdmin() ||
-                     (request.auth != null && resource.data.teacherId == request.auth.uid) ||
-                     (request.auth != null && resource.data.studentId == request.auth.uid);
-      allow update: if request.auth != null && request.resource.data.teacherId == request.auth.uid; // Teacher can update existing record
+      allow create, update: if request.auth.uid == request.resource.data.teacherId || isAdmin();
+      allow read: if request.auth.uid == resource.data.teacherId ||
+                       request.auth.uid == resource.data.studentId ||
+                       isAdmin();
       allow delete: if isAdmin();
     }
-
   }
 }

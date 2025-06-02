@@ -6,26 +6,29 @@ service cloud.firestore {
 
     // Helper function to check if the user is an admin
     function isAdmin() {
-      // UID for the admin user
+      // CRITICAL: Ensure this UID ('DP9s4PczVeOYuzRX7bznXe0Q1x03')
+      // EXACTLY matches the Firebase Authentication UID of YOUR admin user.
+      // Any mismatch will cause admin permission denials.
       return request.auth.uid == 'DP9s4PczVeOYuzRX7bznXe0Q1x03';
     }
 
-    // Rules for users collection
+    // Rules for the 'users' collection
     match /users/{userId} {
-      // Allow create by anyone (for sign-up)
-      allow create: if request.auth.uid == userId; 
-      // Allow read by admin or the authenticated user themselves
-      allow read: if isAdmin() || request.auth.uid == userId || request.auth != null; // Added request.auth != null for broader authenticated read for now
-      // Allow update by admin or the user themselves (e.g., for profile updates)
-      allow update: if isAdmin() || request.auth.uid == userId;
-      // Disallow delete by anyone for now to prevent accidental data loss
-      allow delete: if isAdmin(); // Only admin can delete user accounts
+      // Allow admin to do anything
+      // Allow authenticated users to read any profile
+      // Allow users to create their own profile upon signup
+      // Allow users to update their own profile (e.g. assignedGroupId by admin, or future profile edits by user)
+      // Disallow deletion of user documents by clients for now
+      allow read: if isAdmin() || request.auth != null;
+      allow create: if request.auth.uid == userId; // User can create their own doc
+      allow update: if isAdmin() || request.auth.uid == userId; // Admin or user themselves can update
+      allow delete: if isAdmin(); // Only admin can delete
     }
 
-    // Rules for departments and their subcollections
+    // Rules for 'departments' and its subcollections
     match /departments/{departmentId} {
-      allow read: if isAdmin() || request.auth != null; // Allow any authenticated user to read departments
-      allow write: if isAdmin(); // Only admin can create, update, delete departments
+      allow read: if isAdmin() || request.auth != null; // All authenticated users can read
+      allow write: if isAdmin(); // Create, Update, Delete only by admin
 
       match /years/{yearId} {
         allow read: if isAdmin() || request.auth != null;
@@ -39,40 +42,25 @@ service cloud.firestore {
             allow read: if isAdmin() || request.auth != null;
             allow write: if isAdmin();
 
-            // Schedule specific to a group
+            // Schedule documents within a group
+            // This specific path is now largely covered by the collectionGroup rule for 'schedule' below,
+            // but kept for explicitness if needed for path-specific, non-collectionGroup queries.
             match /schedule/{scheduleId} {
-                // Handled by the collection group rule below for broader query access,
-                // but specific path writes can be more granular if needed.
-                // For now, relying on collection group for reads and admin for writes.
-                allow read: if isAdmin() || 
-                             request.auth.uid == resource.data.teacherId ||
-                             (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-                             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'Student' &&
-                             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.assignedGroupId == resource.data.groupId);
-                allow write: if isAdmin(); // Only admin can manage schedule templates directly here
+              allow read: if isAdmin() ||
+                           request.auth.uid == resource.data.teacherId ||
+                           (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+                           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'Student' &&
+                           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.assignedGroupId == resource.data.groupId);
+              allow write: if isAdmin();
             }
           }
         }
       }
     }
-    
-    // Rules for 'attendances' collection
-    match /attendances/{attendanceId} {
-        // Teacher can create/update attendance for classes they teach. 
-        // Student can read their own attendance. Admin can read/write all.
-        allow read: if isAdmin() || 
-                       request.auth.uid == resource.data.teacherId || // Teacher can read records they created
-                       request.auth.uid == resource.data.studentId;  // Student can read their own records
-        
-        allow create, update: if isAdmin() || 
-                                 (request.auth.uid == resource.data.teacherId && 
-                                  request.resource.data.teacherId == request.auth.uid); // Teacher can create/update if they are the teacher in the record
-                                  
-        allow delete: if isAdmin(); // Only admin can delete attendance records
-    }
-
 
     // Rules for schedule sub-collections (used by collectionGroup queries)
+    // This rule allows the admin to read all schedule documents from any group,
+    // which is necessary for the "Teachers" admin page to determine assignment status.
     match /{path=**}/schedule/{scheduleDocId} {
       allow read: if isAdmin() || // Admin can read all schedule docs
                    request.auth.uid == resource.data.teacherId || // Teacher can read their assigned slots
@@ -80,6 +68,23 @@ service cloud.firestore {
                    get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'Student' &&
                    get(/databases/$(database)/documents/users/$(request.auth.uid)).data.assignedGroupId == resource.data.groupId);
       allow write: if isAdmin(); // Admin can write/update any schedule doc
+    }
+    
+    // Rules for the 'attendances' collection
+    match /attendances/{attendanceId} {
+      // Admin can do anything
+      // Teacher can create records for their classes (teacherId on record must match their UID)
+      // Teacher can read records for their classes
+      // Teacher can update records for their classes
+      // Student can read their own attendance records
+      allow read: if isAdmin() ||
+                     request.auth.uid == resource.data.teacherId ||
+                     request.auth.uid == resource.data.studentId;
+      allow create: if isAdmin() || 
+                       (request.auth.uid == request.resource.data.teacherId); // Teacher creating the record must be the one assigned
+      allow update: if isAdmin() ||
+                       (request.auth.uid == resource.data.teacherId); // Only the teacher who took attendance or admin can update
+      allow delete: if isAdmin();
     }
   }
 }

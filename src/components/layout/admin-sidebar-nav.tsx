@@ -3,7 +3,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { LayoutDashboard, Building, Users, UserCog, BookOpenText, LogOut } from 'lucide-react';
+import { LayoutDashboard, Building, Users, UserCog, BookOpenText, LogOut, ClipboardList } from 'lucide-react';
 import { SidebarMenu, SidebarMenuItem, SidebarMenuButton } from '@/components/ui/sidebar';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -17,6 +17,7 @@ const navItems = [
   { href: '/admin-dashboard/students', label: 'Students', icon: Users },
   { href: '/admin-dashboard/teachers', label: 'Teachers', icon: UserCog },
   { href: '/admin-dashboard/program-management', label: 'Program Management', icon: BookOpenText },
+  { href: '/admin-dashboard/attendance-viewer', label: 'Attendance Viewer', icon: ClipboardList },
 ];
 
 export function AdminSidebarNav() {

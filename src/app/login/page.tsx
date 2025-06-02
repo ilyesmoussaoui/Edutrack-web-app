@@ -1,11 +1,10 @@
-
 "use client";
 
 import type { FormEvent } from 'react';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
-import { doc, setDoc, getDoc } from 'firebase/firestore';
+import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore'; // Import serverTimestamp
 import { auth, db } from '@/lib/firebase';
 import { AppHeader } from '@/components/layout/app-header';
 import { Button } from '@/components/ui/button';
@@ -86,7 +85,7 @@ export default function CombinedAuthPage() {
         fullName: signUpFullName,
         email: signUpEmail,
         role: signUpRole,
-        createdAt: new Date(),
+        createdAt: serverTimestamp(), // Use serverTimestamp here
       });
 
       router.push('/dashboard');

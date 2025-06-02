@@ -153,7 +153,7 @@ export default function DashboardPage() {
           if (userDocSnap.exists()) {
             const fetchedUserData = { uid: user.uid, ...userDocSnap.data() } as UserData;
             setUserData(fetchedUserData);
-            console.log("User Data Fetched:", fetchedUserData); // Log user data including role for verification
+            console.log("User Data Fetched:", fetchedUserData); 
             
             if (fetchedUserData.role === 'Student' && !fetchedUserData.assignedGroupId) {
               setDisplayMessage('Please wait until the Admin assigns you to a group/program.');
@@ -301,7 +301,7 @@ export default function DashboardPage() {
           console.error("Error in handleSlotClick (Teacher): slotData.groupId is undefined.", slotData);
           toast({ variant: "destructive", title: "Data Integrity Error", description: "Class slot is missing group information. Cannot load students." });
           setIsLoadingStudentsForModal(false);
-          setShowClassDetailsModal(true); // Keep modal open to show error
+          setShowClassDetailsModal(true); 
           return;
         }
 
@@ -312,7 +312,12 @@ export default function DashboardPage() {
 
         const newAttendanceStates = new Map<string, StudentAttendanceUIState>();
         if (fetchedStudents.length > 0) {
-            const attendanceRecordsQuery = query(collection(db, 'attendances'), where('classInstanceId', '==', classInstanceIdGenerated));
+            // Query only for attendance records matching classInstanceId AND the current teacher's UID
+            const attendanceRecordsQuery = query(
+                collection(db, 'attendances'), 
+                where('classInstanceId', '==', classInstanceIdGenerated),
+                where('teacherId', '==', currentUser.uid) // Ensures teacher only queries their own records for this instance
+            );
             const attendanceRecordsSnap = await getDocs(attendanceRecordsQuery);
             const existingRecordsMap = new Map<string, AttendanceRecord>();
             attendanceRecordsSnap.forEach(doc => {
@@ -340,9 +345,9 @@ export default function DashboardPage() {
             description = `Failed to load data: ${err.message}`;
         }
         if (err.code === 'permission-denied') {
-            description = "Permission denied. Check Firestore rules.";
+            description = "Permission denied. Check Firestore rules or ensure necessary indexes exist.";
         } else if (err.message && err.message.toLowerCase().includes('index')) {
-            description = "A Firestore index might be missing or inactive.";
+            description = "A Firestore index might be missing or inactive. Check console for link.";
         }
         toast({ variant: "destructive", title: "Data Loading Error", description });
       } finally {
@@ -351,6 +356,7 @@ export default function DashboardPage() {
     } else if (userData?.role === 'Student' && currentUser) {
         setMyAttendanceForSelectedSlot('loading');
         try {
+            // Student's attendance record ID should still be based on classInstanceId and their own UID
             const attendanceDocId = `${classInstanceIdGenerated}_${currentUser.uid}`;
             const attendanceDocRef = doc(db, "attendances", attendanceDocId);
             const docSnap = await getDoc(attendanceDocRef);
@@ -407,7 +413,7 @@ export default function DashboardPage() {
                 studentId: studentState.studentId,
                 classInstanceId: currentClassInstanceId,
                 groupId: selectedClassSlotDetails.groupId,
-                teacherId: currentUser.uid,
+                teacherId: currentUser.uid, // Logged-in teacher's UID
                 moduleName: selectedClassSlotDetails.moduleName,
                 date: Timestamp.fromDate(selectedClassActualDate),
                 timeSlot: selectedClassSlotDetails.time,

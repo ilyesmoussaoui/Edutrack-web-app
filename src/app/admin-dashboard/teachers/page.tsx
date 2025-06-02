@@ -18,17 +18,10 @@ interface Teacher {
   createdAt?: Timestamp;
 }
 
-interface ScheduleSlot {
-  day: string;
-  time: string;
-  subject: string;
+// This interface represents a document from the 'schedule' subcollection
+interface ScheduleSlotDocument {
   teacherId?: string;
-}
-
-interface GroupData {
-  id: string;
-  name: string;
-  scheduleTemplate?: ScheduleSlot[];
+  // Other fields like day, time, moduleName might exist but are not needed for this page's logic
 }
 
 export default function TeachersPage() {
@@ -68,27 +61,29 @@ export default function TeachersPage() {
   useEffect(() => {
     const fetchAssignments = async () => {
       setIsLoadingAssignments(true);
+      setError(null); 
       const currentAssignedIds = new Set<string>();
       try {
-        // Query all 'groups' subcollections across all departments, years, and specialities
-        const groupsQuery = query(collectionGroup(db, 'groups'));
-        const groupsSnapshot = await getDocs(groupsQuery);
-        
-        groupsSnapshot.forEach(groupDoc => {
-          const groupData = groupDoc.data() as Partial<Omit<GroupData, 'id'>>;
-          if (groupData.scheduleTemplate && Array.isArray(groupData.scheduleTemplate)) {
-            groupData.scheduleTemplate.forEach((slot: ScheduleSlot) => {
-              if (slot.teacherId) {
-                currentAssignedIds.add(slot.teacherId);
-              }
-            });
+        // Correctly query all 'schedule' subcollections
+        const scheduleSlotsQuery = query(collectionGroup(db, 'schedule'));
+        const scheduleSlotsSnapshot = await getDocs(scheduleSlotsQuery);
+
+        scheduleSlotsSnapshot.forEach(slotDoc => {
+          const slotData = slotDoc.data() as ScheduleSlotDocument;
+          if (slotData && slotData.teacherId) { 
+            currentAssignedIds.add(slotData.teacherId);
           }
         });
         setAssignedTeacherIds(currentAssignedIds);
       } catch (err: any) {
         console.error("Error fetching assignments:", err);
-        setError("Failed to load teacher assignment statuses. " + err.message);
-        toast({ variant: "destructive", title: "Assignment Status Error", description: "Could not load teacher assignment statuses."});
+         if (err.code === 'permission-denied' || err.message.toLowerCase().includes('permission')) {
+          setError("Failed to load teacher assignment statuses due to insufficient permissions. Please check Firestore rules and admin UID configuration.");
+          toast({ variant: "destructive", title: "Permissions Error", description: "Could not load teacher assignments. Verify admin setup."});
+        } else {
+          setError("Failed to load teacher assignment statuses. " + (err.message || "Unknown error."));
+          toast({ variant: "destructive", title: "Assignment Status Error", description: "Could not load teacher assignment statuses."});
+        }
       } finally {
         setIsLoadingAssignments(false);
       }

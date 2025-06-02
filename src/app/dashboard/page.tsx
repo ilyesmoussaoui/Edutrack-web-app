@@ -5,20 +5,21 @@ import React, { useEffect, useState, useMemo, type ChangeEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { onAuthStateChanged, signOut, type User as FirebaseUser } from 'firebase/auth';
 import { doc, getDoc, collectionGroup, query, where, onSnapshot, collection, serverTimestamp, setDoc, Timestamp, orderBy, getDocs } from 'firebase/firestore';
-import { ref, uploadBytesResumable, getDownloadURL, type StorageError } from "firebase/storage";
-import { auth, db, storage } from '@/lib/firebase';
+// Removed: import { ref, uploadBytesResumable, getDownloadURL, type StorageError } from "firebase/storage";
+import { auth, db } from '@/lib/firebase'; // Removed storage
 import { AppHeader } from '@/components/layout/app-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogClose, DialogFooter } from "@/components/ui/dialog";
-import { Loader2, AlertTriangle, LogOut, CalendarDays, ChevronLeft, ChevronRight, Info, UploadCloud, Image as ImageIcon, Trash2 } from 'lucide-react';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Loader2, AlertTriangle, LogOut, CalendarDays, ChevronLeft, ChevronRight, Info } from 'lucide-react'; // Removed UploadCloud, ImageIcon, Trash2
 import { cn } from '@/lib/utils';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
-import Image from 'next/image';
+// Removed: import Image from 'next/image';
 
 
 interface UserData {
@@ -52,26 +53,22 @@ interface StudentAttendanceUIState {
   studentName: string;
   status: 'Present' | 'Absent' | 'AbsentWithJustification' | '';
   justificationNote: string;
-  imageFile: File | null;
-  imagePreviewUrl: string | null; // For local preview before upload
-  imageUrlFromDb: string | null; // For existing image
-  isUploadingImage: boolean;
-  imageUploadError: string | null;
-  originalRecordExists: boolean; // To know if we are updating or creating
+  // Removed image related fields
+  originalRecordExists: boolean; 
 }
 
 interface AttendanceRecord {
   studentId: string;
-  classInstanceId: string; // e.g., groupId_day_time_YYYYMMDD
+  classInstanceId: string; 
   groupId: string;
   teacherId: string;
   moduleName: string;
-  date: Timestamp; // Firestore Timestamp
+  date: Timestamp; 
   timeSlot: string;
   status: 'Present' | 'Absent' | 'AbsentWithJustification';
   justificationNote?: string;
-  justificationImageUrl?: string;
-  timestamp: Timestamp; // Server timestamp of when attendance was recorded/updated
+  // Removed justificationImageUrl
+  timestamp: Timestamp; 
 }
 
 
@@ -85,7 +82,6 @@ const TIME_SLOTS = [
 
 const createSlotKey = (day: string, time: string) => `${day}_${time.replace(/[\s:-]/g, '')}`;
 
-// Helper function to get the start of the week (Sunday)
 const getStartOfWeek = (date: Date): Date => {
   const d = new Date(date);
   const day = d.getDay();
@@ -93,7 +89,6 @@ const getStartOfWeek = (date: Date): Date => {
   return new Date(d.setDate(diff));
 };
 
-// Helper function to get the date for a specific day in the current week
 const getDateForDayInWeek = (startDate: Date, dayName: string): Date => {
   const dayIndex = DAYS_OF_WEEK.indexOf(dayName);
   if (dayIndex === -1) throw new Error("Invalid day name");
@@ -102,10 +97,9 @@ const getDateForDayInWeek = (startDate: Date, dayName: string): Date => {
   return newDate;
 };
 
-// Helper function to format date range for display
 const formatDateRange = (startDate: Date): string => {
   const endDate = new Date(startDate);
-  endDate.setDate(startDate.getDate() + 6); // Assuming week is 7 days for display range
+  endDate.setDate(startDate.getDate() + 6); 
   return `${startDate.toLocaleDateString()} - ${endDate.toLocaleDateString()}`;
 };
 
@@ -166,7 +160,7 @@ export default function DashboardPage() {
             }
           } else {
             setError("User data not found. Please sign up again or contact support.");
-            await signOut(auth); // Important: Sign out if user doc doesn't exist
+            await signOut(auth); 
             router.push('/login');
           }
         } catch (err: any) {
@@ -183,7 +177,6 @@ export default function DashboardPage() {
     return () => unsubscribeAuth();
   }, [router]);
 
-  // Effect for Teacher's schedule
   useEffect(() => {
     if (userData?.role === 'Teacher' && currentUser && !displayMessage) {
       setIsLoadingTeacherSchedule(true);
@@ -205,7 +198,7 @@ export default function DashboardPage() {
         });
         setTeacherSchedule(newSchedule);
         
-        if (!hasAssignments && !isLoadingUser && !error) { // Check isLoadingUser and error to prevent premature message
+        if (!hasAssignments && !isLoadingUser && !error) { 
             setDisplayMessage('You have no classes in your recurring schedule, or please wait for admin assignment.');
         } else if (hasAssignments) {
             setDisplayMessage(null); 
@@ -223,7 +216,6 @@ export default function DashboardPage() {
     }
   }, [userData, currentUser, displayMessage, isLoadingUser, error]);
 
-  // Effect for Student's schedule
   useEffect(() => {
     if (userData?.role === 'Student' && userData.assignedGroupId && currentUser && !displayMessage) {
       setIsLoadingStudentSchedule(true);
@@ -305,13 +297,11 @@ export default function DashboardPage() {
       setStudentAttendanceStates(new Map());
 
       try {
-        // Fetch students for the group
         const studentsQuery = query(collection(db, 'users'), where('assignedGroupId', '==', slotData.groupId), where('role', '==', 'Student'), orderBy('fullName'));
         const studentDocsSnap = await getDocs(studentsQuery);
         const fetchedStudents = studentDocsSnap.docs.map(doc => ({ uid: doc.id, ...doc.data() } as StudentFromUserDoc));
         setStudentsForModal(fetchedStudents);
 
-        // Fetch existing attendance for these students for this class instance
         const newAttendanceStates = new Map<string, StudentAttendanceUIState>();
         if (fetchedStudents.length > 0) {
             const attendanceRecordsQuery = query(collection(db, 'attendances'), where('classInstanceId', '==', classInstanceIdGenerated));
@@ -329,11 +319,6 @@ export default function DashboardPage() {
                     studentName: student.fullName,
                     status: existingRec?.status || '',
                     justificationNote: existingRec?.justificationNote || '',
-                    imageFile: null,
-                    imagePreviewUrl: null, // Will be set if existingRec.justificationImageUrl exists
-                    imageUrlFromDb: existingRec?.justificationImageUrl || null,
-                    isUploadingImage: false,
-                    imageUploadError: null,
                     originalRecordExists: !!existingRec,
                 });
             });
@@ -372,59 +357,6 @@ export default function DashboardPage() {
     });
   };
 
-  const handleImageFileChange = (studentId: string, event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      setStudentAttendanceStates(prev => {
-        const newState = new Map(prev);
-        const studentState = newState.get(studentId);
-        if (studentState) {
-          newState.set(studentId, { 
-            ...studentState, 
-            imageFile: file, 
-            imagePreviewUrl: URL.createObjectURL(file), // Create local preview
-            imageUrlFromDb: null, // Clear existing DB image if new one is selected
-            imageUploadError: null 
-          });
-        }
-        return newState;
-      });
-    }
-  };
-
-  const handleImageUpload = async (studentId: string) => {
-    const studentState = studentAttendanceStates.get(studentId);
-    if (!studentState?.imageFile || !currentClassInstanceId || !currentUser) return;
-
-    setStudentAttendanceStates(prev => new Map(prev).set(studentId, {...prev.get(studentId)!, isUploadingImage: true, imageUploadError: null}));
-    
-    const filePath = `attendance_justifications/${currentClassInstanceId}/${studentId}/${Date.now()}_${studentState.imageFile.name}`;
-    const storageRef = ref(storage, filePath);
-
-    try {
-      const uploadTask = uploadBytesResumable(storageRef, studentState.imageFile);
-      
-      uploadTask.on('state_changed', 
-        (snapshot) => { /* Optional: Handle progress */ }, 
-        (error: StorageError) => {
-          console.error("Upload failed:", error);
-          setStudentAttendanceStates(prev => new Map(prev).set(studentId, {...prev.get(studentId)!, isUploadingImage: false, imageUploadError: error.message}));
-          toast({variant: "destructive", title: "Upload Failed", description: `Could not upload image for ${studentState.studentName}.`});
-        }, 
-        async () => {
-          const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
-          setStudentAttendanceStates(prev => new Map(prev).set(studentId, {...prev.get(studentId)!, imageUrlFromDb: downloadURL, isUploadingImage: false, imageFile: null }));
-          toast({title: "Upload Successful", description: `Image uploaded for ${studentState.studentName}.`});
-        }
-      );
-    } catch (error: any) {
-        console.error("Upload initiation failed:", error);
-        setStudentAttendanceStates(prev => new Map(prev).set(studentId, {...prev.get(studentId)!, isUploadingImage: false, imageUploadError: error.message || "Upload failed"}));
-        toast({variant: "destructive", title: "Upload Failed", description: `Could not upload image for ${studentState.studentName}.`});
-    }
-  };
-
-
   const handleSaveAttendance = async () => {
     if (!currentUser || !selectedClassSlotDetails || !currentClassInstanceId || !selectedClassActualDate) {
         toast({variant: "destructive", title: "Error", description: "Missing critical data to save attendance."});
@@ -433,12 +365,12 @@ export default function DashboardPage() {
     setIsSavingAttendance(true);
     try {
         const batchPromises = Array.from(studentAttendanceStates.values()).map(async (studentState) => {
-            if (!studentState.status) return; // Skip if no status selected
+            if (!studentState.status) return; 
 
             const attendanceDocId = `${currentClassInstanceId}_${studentState.studentId}`;
             const attendanceDocRef = doc(db, "attendances", attendanceDocId);
             
-            const record: Omit<AttendanceRecord, 'timestamp'> = {
+            const recordData: Partial<AttendanceRecord> = {
                 studentId: studentState.studentId,
                 classInstanceId: currentClassInstanceId,
                 groupId: selectedClassSlotDetails.groupId,
@@ -447,10 +379,17 @@ export default function DashboardPage() {
                 date: Timestamp.fromDate(selectedClassActualDate),
                 timeSlot: selectedClassSlotDetails.time,
                 status: studentState.status,
-                justificationNote: studentState.status === 'AbsentWithJustification' ? studentState.justificationNote : undefined,
-                justificationImageUrl: studentState.status === 'AbsentWithJustification' ? studentState.imageUrlFromDb : undefined,
             };
-            await setDoc(attendanceDocRef, { ...record, timestamp: serverTimestamp() }, { merge: true });
+
+            if (studentState.status === 'AbsentWithJustification') {
+                recordData.justificationNote = studentState.justificationNote;
+            } else {
+                // Ensure justificationNote is removed if status is not AbsentWithJustification
+                // by setting it to undefined, which Firestore can then remove if merging.
+                recordData.justificationNote = undefined; 
+            }
+            
+            await setDoc(attendanceDocRef, { ...recordData, timestamp: serverTimestamp() }, { merge: true });
         });
         await Promise.all(batchPromises);
         toast({title: "Success", description: "Attendance saved successfully."});
@@ -465,8 +404,8 @@ export default function DashboardPage() {
 
 
   const mainLoading = isLoadingUser || 
-                      (userData?.role === 'Teacher' && isLoadingTeacherSchedule && !displayMessage && teacherSchedule.size === 0) || // Added teacherSchedule.size check
-                      (userData?.role === 'Student' && userData.assignedGroupId && isLoadingStudentSchedule && !displayMessage && studentSchedule.size === 0); // Added studentSchedule.size check
+                      (userData?.role === 'Teacher' && isLoadingTeacherSchedule && !displayMessage && teacherSchedule.size === 0) || 
+                      (userData?.role === 'Student' && userData.assignedGroupId && isLoadingStudentSchedule && !displayMessage && studentSchedule.size === 0); 
 
   const currentScheduleMap = userData?.role === 'Teacher' ? teacherSchedule : studentSchedule;
 
@@ -586,7 +525,7 @@ export default function DashboardPage() {
               <DialogHeader>
                 <DialogTitle>Class Details & Attendance</DialogTitle>
                 <DialogDescription>
-                  {selectedClassSlotDetails.moduleName} - {selectedClassSlotDetails.groupName} <br/>
+                  {selectedClassSlotDetails.moduleName} - {userData?.role === 'Teacher' ? selectedClassSlotDetails.groupName : `Taught by ${selectedClassSlotDetails.teacherName}`} <br/>
                   {selectedClassActualDate?.toLocaleDateString()} at {selectedClassSlotDetails.time} in {selectedClassSlotDetails.roomHall}
                 </DialogDescription>
               </DialogHeader>
@@ -621,28 +560,6 @@ export default function DashboardPage() {
                               onChange={(e) => handleJustificationNoteChange(student.uid, e.target.value)}
                               disabled={isSavingAttendance}
                             />
-                            <div className="space-y-1">
-                                <Label htmlFor={`${student.uid}-file`}>Doctor's Note (Image)</Label>
-                                <Input 
-                                  id={`${student.uid}-file`} 
-                                  type="file" 
-                                  accept="image/*" 
-                                  onChange={(e) => handleImageFileChange(student.uid, e)}
-                                  disabled={attendanceState.isUploadingImage || isSavingAttendance}
-                                />
-                                {attendanceState.isUploadingImage && <Loader2 className="h-4 w-4 animate-spin my-1" />}
-                                {attendanceState.imageUploadError && <p className="text-xs text-destructive">{attendanceState.imageUploadError}</p>}
-                            </div>
-                            {(attendanceState.imagePreviewUrl || attendanceState.imageUrlFromDb) && (
-                                <div className="mt-2">
-                                    <Image src={attendanceState.imagePreviewUrl || attendanceState.imageUrlFromDb!} alt="Justification preview" width={100} height={100} className="rounded-md object-cover" data-ai-hint="document medical"/>
-                                    {attendanceState.imageFile && !attendanceState.isUploadingImage && !attendanceState.imageUrlFromDb && (
-                                        <Button size="sm" variant="outline" onClick={() => handleImageUpload(student.uid)} className="mt-1">
-                                            <UploadCloud className="mr-2 h-3 w-3"/> Upload Image
-                                        </Button>
-                                    )}
-                                </div>
-                            )}
                           </div>
                         )}
                       </Card>

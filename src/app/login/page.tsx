@@ -1,15 +1,94 @@
 
 "use client";
 
+import type { FormEvent } from 'react';
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
+import { doc, setDoc } from 'firebase/firestore';
+import { auth, db } from '@/lib/firebase';
 import { AppHeader } from '@/components/layout/app-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import Link from 'next/link';
+import { Loader2 } from 'lucide-react';
 
 export default function CombinedAuthPage() {
+  const router = useRouter();
+
+  // Login States
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [loginLoading, setLoginLoading] = useState(false);
+
+  // Sign Up States
+  const [signUpFullName, setSignUpFullName] = useState('');
+  const [signUpEmail, setSignUpEmail] = useState('');
+  const [signUpPassword, setSignUpPassword] = useState('');
+  const [signUpRole, setSignUpRole] = useState('');
+  const [signUpError, setSignUpError] = useState<string | null>(null);
+  const [signUpLoading, setSignUpLoading] = useState(false);
+
+  const handleLogin = async (event: FormEvent) => {
+    event.preventDefault();
+    setLoginLoading(true);
+    setLoginError(null);
+    try {
+      // Placeholder for actual login:
+      // await signInWithEmailAndPassword(auth, loginEmail, loginPassword);
+      // For now, just navigate to dashboard
+      console.log("Login attempt with:", loginEmail);
+      router.push('/dashboard');
+    } catch (err: any) {
+      setLoginError(err.message || 'Failed to login.');
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
+  const handleSignUp = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!signUpRole) {
+      setSignUpError("Please select a role.");
+      return;
+    }
+    setSignUpLoading(true);
+    setSignUpError(null);
+
+    try {
+      const userCredential = await createUserWithEmailAndPassword(auth, signUpEmail, signUpPassword);
+      const user = userCredential.user;
+
+      // Create user document in Firestore
+      await setDoc(doc(db, "users", user.uid), {
+        uid: user.uid,
+        fullName: signUpFullName,
+        email: signUpEmail,
+        role: signUpRole,
+        createdAt: new Date(),
+      });
+
+      router.push('/dashboard');
+    } catch (err: any) {
+      if (err.code === 'auth/email-already-in-use') {
+        setSignUpError('This email address is already in use.');
+      } else if (err.code === 'auth/weak-password') {
+        setSignUpError('The password is too weak. Please use a stronger password.');
+      } else {
+        setSignUpError(err.message || 'Failed to create account. Please try again.');
+      }
+      console.error("Sign up error:", err);
+    } finally {
+      setSignUpLoading(false);
+    }
+  };
+
+
   return (
     <div className="flex flex-col min-h-screen bg-background">
       <AppHeader />
@@ -28,49 +107,102 @@ export default function CombinedAuthPage() {
                 <TabsTrigger value="signup">Sign Up</TabsTrigger>
               </TabsList>
               <TabsContent value="login">
-                <form className="space-y-4">
+                <form onSubmit={handleLogin} className="space-y-4">
                   <div className="space-y-2">
                     <Label htmlFor="login-email">Email</Label>
-                    <Input id="login-email" type="email" placeholder="user@example.com" />
+                    <Input 
+                      id="login-email" 
+                      type="email" 
+                      placeholder="user@example.com" 
+                      value={loginEmail}
+                      onChange={(e) => setLoginEmail(e.target.value)}
+                      required
+                      disabled={loginLoading}
+                    />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="login-password">Password</Label>
-                    <Input id="login-password" type="password" placeholder="••••••••" />
+                    <Input 
+                      id="login-password" 
+                      type="password" 
+                      placeholder="••••••••" 
+                      value={loginPassword}
+                      onChange={(e) => setLoginPassword(e.target.value)}
+                      required
+                      disabled={loginLoading}
+                    />
                   </div>
-                  {/* For now, this button links to the dashboard. Later, it will handle actual login. */}
-                  <Link href="/dashboard" passHref legacyBehavior>
-                    <Button className="w-full" size="lg">
-                      Login
-                    </Button>
-                  </Link>
+                  {loginError && <p className="text-sm text-destructive">{loginError}</p>}
+                  <Button type="submit" className="w-full" size="lg" disabled={loginLoading}>
+                    {loginLoading ? <Loader2 className="animate-spin" /> : 'Login'}
+                  </Button>
                 </form>
               </TabsContent>
               <TabsContent value="signup">
-                <form className="space-y-4">
+                <form onSubmit={handleSignUp} className="space-y-4">
                   <div className="space-y-2">
                     <Label htmlFor="signup-fullName">Full Name</Label>
-                    <Input id="signup-fullName" type="text" placeholder="Your Name" />
+                    <Input 
+                      id="signup-fullName" 
+                      type="text" 
+                      placeholder="Your Name" 
+                      value={signUpFullName}
+                      onChange={(e) => setSignUpFullName(e.target.value)}
+                      required
+                      disabled={signUpLoading}
+                    />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="signup-email">Email</Label>
-                    <Input id="signup-email" type="email" placeholder="user@example.com" />
+                    <Input 
+                      id="signup-email" 
+                      type="email" 
+                      placeholder="user@example.com" 
+                      value={signUpEmail}
+                      onChange={(e) => setSignUpEmail(e.target.value)}
+                      required
+                      disabled={signUpLoading}
+                    />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="signup-password">Password</Label>
-                    <Input id="signup-password" type="password" placeholder="••••••••" />
+                    <Input 
+                      id="signup-password" 
+                      type="password" 
+                      placeholder="At least 6 characters" 
+                      value={signUpPassword}
+                      onChange={(e) => setSignUpPassword(e.target.value)}
+                      required
+                      disabled={signUpLoading}
+                    />
                   </div>
-                   {/* For now, this button links to the dashboard. Later, it will handle actual signup. */}
-                  <Link href="/dashboard" passHref legacyBehavior>
-                    <Button className="w-full" size="lg">
-                      Sign Up
-                    </Button>
-                  </Link>
+                  <div className="space-y-2">
+                    <Label htmlFor="signup-role">I am a...</Label>
+                    <Select 
+                      value={signUpRole} 
+                      onValueChange={setSignUpRole}
+                      required
+                      disabled={signUpLoading}
+                    >
+                      <SelectTrigger id="signup-role">
+                        <SelectValue placeholder="Select your role" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Student">Student</SelectItem>
+                        <SelectItem value="Teacher">Teacher</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {signUpError && <p className="text-sm text-destructive">{signUpError}</p>}
+                  <Button type="submit" className="w-full" size="lg" disabled={signUpLoading}>
+                     {signUpLoading ? <Loader2 className="animate-spin" /> : 'Sign Up'}
+                  </Button>
                 </form>
               </TabsContent>
             </Tabs>
             <div className="text-center mt-6">
               <Link href="/" passHref legacyBehavior>
-                <Button variant="link" className="text-sm">
+                <Button variant="link" className="text-sm" disabled={loginLoading || signUpLoading}>
                   Back to Home
                 </Button>
               </Link>

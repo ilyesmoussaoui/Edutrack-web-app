@@ -9,7 +9,7 @@ import { Card, CardHeader, CardTitle, CardContent, CardDescription, CardFooter }
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Building, Edit3, Trash2, Loader2, AlertTriangle, PlusCircle, Briefcase, ChevronRight, ListTree, CalendarDays } from 'lucide-react';
+import { Building, Edit3, Trash2, Loader2, AlertTriangle, PlusCircle, Briefcase, ChevronRight, ListTree, CalendarDays, Users } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -30,7 +30,6 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
 
 interface Department {
@@ -48,6 +47,15 @@ interface Year {
 interface Speciality {
   id: string;
   name: string;
+  createdAt?: Timestamp;
+}
+
+interface Group {
+  id: string;
+  name: string;
+  departmentId: string;
+  yearId: string;
+  specialityId: string;
   createdAt?: Timestamp;
 }
 
@@ -80,14 +88,26 @@ export default function DepartmentsPage() {
   const [showEditSpecialityDialog, setShowEditSpecialityDialog] = useState(false);
   const [specialityToDelete, setSpecialityToDelete] = useState<Speciality | null>(null);
   const [showDeleteSpecialityConfirmDialog, setShowDeleteSpecialityConfirmDialog] = useState(false);
+  const [selectedSpeciality, setSelectedSpeciality] = useState<Speciality | null>(null);
+
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [newGroupName, setNewGroupName] = useState('');
+  const [editingGroup, setEditingGroup] = useState<Group | null>(null);
+  const [groupToEditName, setGroupToEditName] = useState('');
+  const [showEditGroupDialog, setShowEditGroupDialog] = useState(false);
+  const [groupToDelete, setGroupToDelete] = useState<Group | null>(null);
+  const [showDeleteGroupConfirmDialog, setShowDeleteGroupConfirmDialog] = useState(false);
+
 
   const [isLoadingDepartments, setIsLoadingDepartments] = useState(true);
   const [isLoadingYears, setIsLoadingYears] = useState(false);
   const [isLoadingSpecialities, setIsLoadingSpecialities] = useState(false);
+  const [isLoadingGroups, setIsLoadingGroups] = useState(false);
   
   const [isProcessingDepartment, setIsProcessingDepartment] = useState(false);
   const [isProcessingYear, setIsProcessingYear] = useState(false);
   const [isProcessingSpeciality, setIsProcessingSpeciality] = useState(false);
+  const [isProcessingGroup, setIsProcessingGroup] = useState(false);
   
   const [error, setError] = useState<string | null>(null);
 
@@ -119,6 +139,7 @@ export default function DepartmentsPage() {
     if (selectedDepartment?.id) {
       setIsLoadingYears(true);
       setYears([]);
+      setSelectedYear(null); // Reset year selection
       const yearsCollectionRef = collection(db, "departments", selectedDepartment.id, "years");
       const q = query(yearsCollectionRef, orderBy("name", "asc"));
 
@@ -141,12 +162,13 @@ export default function DepartmentsPage() {
       setYears([]);
       setSelectedYear(null); 
     }
-  }, [selectedDepartment?.id, toast, selectedDepartment?.name]);
+  }, [selectedDepartment, toast]);
 
   useEffect(() => {
     if (selectedDepartment?.id && selectedYear?.id) {
       setIsLoadingSpecialities(true);
       setSpecialities([]);
+      setSelectedSpeciality(null); // Reset speciality selection
       const specialitiesCollectionRef = collection(db, "departments", selectedDepartment.id, "years", selectedYear.id, "specialities");
       const q = query(specialitiesCollectionRef, orderBy("name", "asc"));
 
@@ -167,8 +189,36 @@ export default function DepartmentsPage() {
       return () => unsubscribe();
     } else {
       setSpecialities([]);
+      setSelectedSpeciality(null);
     }
-  }, [selectedDepartment?.id, selectedYear?.id, toast, selectedYear?.name]);
+  }, [selectedDepartment?.id, selectedYear, toast]);
+
+  useEffect(() => {
+    if (selectedDepartment?.id && selectedYear?.id && selectedSpeciality?.id) {
+      setIsLoadingGroups(true);
+      setGroups([]);
+      const groupsCollectionRef = collection(db, "departments", selectedDepartment.id, "years", selectedYear.id, "specialities", selectedSpeciality.id, "groups");
+      const q = query(groupsCollectionRef, orderBy("name", "asc"));
+
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const fetchedGroups: Group[] = [];
+        snapshot.forEach((doc) => {
+          fetchedGroups.push({ id: doc.id, ...doc.data() } as Group);
+        });
+        setGroups(fetchedGroups);
+        setIsLoadingGroups(false);
+        setError(null);
+      }, (err) => {
+        console.error(`Error fetching groups for ${selectedSpeciality.name}:`, err);
+        setError(`Failed to fetch groups. Please try again.`);
+        setIsLoadingGroups(false);
+        toast({ variant: "destructive", title: "Error", description: `Could not fetch groups for ${selectedSpeciality.name}.`});
+      });
+      return () => unsubscribe();
+    } else {
+      setGroups([]);
+    }
+  }, [selectedDepartment?.id, selectedYear?.id, selectedSpeciality, toast]);
 
 
   const handleAddDepartment = async (event: FormEvent) => {
@@ -216,9 +266,14 @@ export default function DepartmentsPage() {
     if (!departmentToDelete) return;
     setIsProcessingDepartment(true); setError(null);
     try {
-      if (selectedDepartment?.id === departmentToDelete.id) { setSelectedDepartment(null); } // Also resets selectedYear and specialities via useEffect
+      // Reset selections if the deleted department was the selected one
+      if (selectedDepartment?.id === departmentToDelete.id) { 
+        setSelectedDepartment(null); 
+        //setSelectedYear(null); // Handled by useEffect on selectedDepartment
+        //setSelectedSpeciality(null); // Handled by useEffect on selectedYear
+      }
       const deptDocRef = doc(db, "departments", departmentToDelete.id);
-      await deleteDoc(deptDocRef);
+      await deleteDoc(deptDocRef); // Firestore handles deletion of subcollections if needed via cloud functions, not client-side.
       setShowDeleteDepartmentConfirmDialog(false); setDepartmentToDelete(null);
       toast({ title: "Success", description: `Department "${departmentToDelete.name}" deleted.` });
     } catch (err: any) {
@@ -229,10 +284,9 @@ export default function DepartmentsPage() {
 
   const handleSelectDepartment = (department: Department) => {
     if (selectedDepartment?.id === department.id) {
-      setSelectedDepartment(null); // Deselect, also clears selectedYear via useEffect
+      setSelectedDepartment(null); 
     } else {
       setSelectedDepartment(department);
-      setSelectedYear(null); // Clear year selection when department changes
       setError(null);
     }
   };
@@ -281,10 +335,13 @@ export default function DepartmentsPage() {
     if (!yearToDelete || !selectedDepartment) return;
     setIsProcessingYear(true); setError(null);
     try {
-      if (selectedYear?.id === yearToDelete.id) { setSelectedYear(null); } // Also resets specialities via useEffect
+      if (selectedYear?.id === yearToDelete.id) { 
+          setSelectedYear(null); 
+          //setSelectedSpeciality(null); // Handled by useEffect on selectedYear
+      }
       const yearDocRef = doc(db, "departments", selectedDepartment.id, "years", yearToDelete.id);
       await deleteDoc(yearDocRef);
-      setShowDeleteYearConfirmDialog(false); setYearToDelete(null);
+      setShowDeleteDepartmentConfirmDialog(false); setYearToDelete(null);
       toast({ title: "Success", description: `Year "${yearToDelete.name}" deleted.` });
     } catch (err: any) {
       console.error("Error deleting year:", err); setError("Failed to delete year.");
@@ -294,7 +351,7 @@ export default function DepartmentsPage() {
 
   const handleSelectYear = (year: Year) => {
     if (selectedYear?.id === year.id) {
-      setSelectedYear(null); // Deselect
+      setSelectedYear(null);
     } else {
       setSelectedYear(year);
       setError(null);
@@ -345,6 +402,9 @@ export default function DepartmentsPage() {
     if (!specialityToDelete || !selectedDepartment || !selectedYear) return;
     setIsProcessingSpeciality(true); setError(null);
     try {
+      if (selectedSpeciality?.id === specialityToDelete.id) {
+        setSelectedSpeciality(null); // This will also clear groups via useEffect
+      }
       const specDocRef = doc(db, "departments", selectedDepartment.id, "years", selectedYear.id, "specialities", specialityToDelete.id);
       await deleteDoc(specDocRef);
       setShowDeleteSpecialityConfirmDialog(false); setSpecialityToDelete(null);
@@ -354,6 +414,77 @@ export default function DepartmentsPage() {
       toast({ variant: "destructive", title: "Error", description: "Could not delete speciality." });
     } finally { setIsProcessingSpeciality(false); }
   };
+
+  const handleSelectSpeciality = (speciality: Speciality) => {
+    if (selectedSpeciality?.id === speciality.id) {
+      setSelectedSpeciality(null); // Deselect
+    } else {
+      setSelectedSpeciality(speciality);
+      setError(null);
+    }
+  };
+
+  const handleAddGroup = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!selectedDepartment || !selectedYear || !selectedSpeciality || !newGroupName.trim()) {
+      toast({ variant: "destructive", title: "Validation Error", description: "Group name cannot be empty and department/year/speciality must be selected."}); return;
+    }
+    setIsProcessingGroup(true); setError(null);
+    try {
+      await addDoc(collection(db, "departments", selectedDepartment.id, "years", selectedYear.id, "specialities", selectedSpeciality.id, "groups"), { 
+        name: newGroupName.trim(), 
+        departmentId: selectedDepartment.id,
+        yearId: selectedYear.id,
+        specialityId: selectedSpeciality.id,
+        createdAt: serverTimestamp() 
+      });
+      setNewGroupName('');
+      toast({ title: "Success", description: `Group "${newGroupName.trim()}" added to ${selectedSpeciality.name}.`});
+    } catch (err:any) {
+      console.error("Error adding group:", err); setError("Failed to add group.");
+      toast({ variant: "destructive", title: "Error", description: "Could not add group." });
+    } finally { setIsProcessingGroup(false); }
+  };
+
+  const openEditGroupDialog = (group: Group) => {
+    setEditingGroup(group); setGroupToEditName(group.name); setShowEditGroupDialog(true);
+  };
+
+  const handleUpdateGroup = async () => {
+    if (!editingGroup || !selectedDepartment || !selectedYear || !selectedSpeciality || !groupToEditName.trim()) {
+      toast({ variant: "destructive", title: "Validation Error", description: "Group name cannot be empty." }); return;
+    }
+    setIsProcessingGroup(true); setError(null);
+    try {
+      const groupDocRef = doc(db, "departments", selectedDepartment.id, "years", selectedYear.id, "specialities", selectedSpeciality.id, "groups", editingGroup.id);
+      await updateDoc(groupDocRef, { name: groupToEditName.trim() });
+      setShowEditGroupDialog(false); setEditingGroup(null);
+      toast({ title: "Success", description: `Group "${groupToEditName.trim()}" updated.` });
+    } catch (err:any) {
+      console.error("Error updating group:", err); setError("Failed to update group.");
+      toast({ variant: "destructive", title: "Error", description: "Could not update group." });
+    } finally { setIsProcessingGroup(false); }
+  };
+
+  const openDeleteGroupDialog = (group: Group) => {
+    setGroupToDelete(group); setShowDeleteGroupConfirmDialog(true);
+  };
+
+  const handleDeleteGroup = async () => {
+    if (!groupToDelete || !selectedDepartment || !selectedYear || !selectedSpeciality) return;
+    setIsProcessingGroup(true); setError(null);
+    try {
+      const groupDocRef = doc(db, "departments", selectedDepartment.id, "years", selectedYear.id, "specialities", selectedSpeciality.id, "groups", groupToDelete.id);
+      await deleteDoc(groupDocRef);
+      setShowDeleteGroupConfirmDialog(false); setGroupToDelete(null);
+      toast({ title: "Success", description: `Group "${groupToDelete.name}" deleted.` });
+    } catch (err: any) {
+      console.error("Error deleting group:", err); setError("Failed to delete group.");
+      toast({ variant: "destructive", title: "Error", description: "Could not delete group." });
+    } finally { setIsProcessingGroup(false); }
+  };
+  
+  const anyProcessing = isProcessingDepartment || isProcessingYear || isProcessingSpeciality || isProcessingGroup;
 
   return (
     <div className="space-y-6">
@@ -367,9 +498,9 @@ export default function DepartmentsPage() {
           <form onSubmit={handleAddDepartment} className="flex items-end gap-4 mb-6 pb-6 border-b">
             <div className="flex-grow space-y-2">
               <Label htmlFor="newDepartmentName">New Department Name</Label>
-              <Input id="newDepartmentName" type="text" placeholder="e.g., Computer Science" value={newDepartmentName} onChange={(e) => setNewDepartmentName(e.target.value)} disabled={isProcessingDepartment} />
+              <Input id="newDepartmentName" type="text" placeholder="e.g., Computer Science" value={newDepartmentName} onChange={(e) => setNewDepartmentName(e.target.value)} disabled={anyProcessing} />
             </div>
-            <Button type="submit" disabled={isProcessingDepartment || !newDepartmentName.trim()}>
+            <Button type="submit" disabled={anyProcessing || !newDepartmentName.trim()}>
               {isProcessingDepartment && !editingDepartment && !departmentToDelete ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PlusCircle className="mr-2 h-4 w-4" />} Add Department
             </Button>
           </form>
@@ -386,8 +517,8 @@ export default function DepartmentsPage() {
                         <span className={cn("ml-2 font-medium text-card-foreground", selectedDepartment?.id === dept.id && "text-primary")}>{dept.name}</span>
                       </div>
                       <div className="space-x-2">
-                        <Button variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); openEditDepartmentDialog(dept);}} disabled={isProcessingDepartment || isProcessingYear || isProcessingSpeciality}><Edit3 className="mr-1.5 h-4 w-4" /> Edit</Button>
-                        <Button variant="destructive" size="sm" onClick={(e) => { e.stopPropagation(); openDeleteDepartmentDialog(dept);}} disabled={isProcessingDepartment || isProcessingYear || isProcessingSpeciality}><Trash2 className="mr-1.5 h-4 w-4" /> Delete</Button>
+                        <Button variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); openEditDepartmentDialog(dept);}} disabled={anyProcessing}><Edit3 className="mr-1.5 h-4 w-4" /> Edit</Button>
+                        <Button variant="destructive" size="sm" onClick={(e) => { e.stopPropagation(); openDeleteDepartmentDialog(dept);}} disabled={anyProcessing}><Trash2 className="mr-1.5 h-4 w-4" /> Delete</Button>
                       </div>
                     </CardContent>
                   </Card>
@@ -408,9 +539,9 @@ export default function DepartmentsPage() {
             <form onSubmit={handleAddYear} className="flex items-end gap-4 mb-6 pb-6 border-b">
               <div className="flex-grow space-y-2">
                 <Label htmlFor="newYearName">New Year Name</Label>
-                <Input id="newYearName" type="text" placeholder="e.g., 1st Year" value={newYearName} onChange={(e) => setNewYearName(e.target.value)} disabled={isProcessingYear} />
+                <Input id="newYearName" type="text" placeholder="e.g., 1st Year" value={newYearName} onChange={(e) => setNewYearName(e.target.value)} disabled={anyProcessing} />
               </div>
-              <Button type="submit" disabled={isProcessingYear || !newYearName.trim()}>
+              <Button type="submit" disabled={anyProcessing || !newYearName.trim()}>
                 {isProcessingYear && !editingYear && !yearToDelete ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PlusCircle className="mr-2 h-4 w-4" />} Add Year
               </Button>
             </form>
@@ -426,8 +557,8 @@ export default function DepartmentsPage() {
                            <span className={cn("ml-2 font-medium text-card-foreground", selectedYear?.id === year.id && "text-primary")}>{year.name}</span>
                         </div>
                         <div className="space-x-2">
-                          <Button variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); openEditYearDialog(year);}} disabled={isProcessingYear || isProcessingDepartment || isProcessingSpeciality}><Edit3 className="mr-1.5 h-4 w-4" /> Edit</Button>
-                          <Button variant="destructive" size="sm" onClick={(e) => { e.stopPropagation(); openDeleteYearDialog(year);}} disabled={isProcessingYear || isProcessingDepartment || isProcessingSpeciality}><Trash2 className="mr-1.5 h-4 w-4" /> Delete</Button>
+                          <Button variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); openEditYearDialog(year);}} disabled={anyProcessing}><Edit3 className="mr-1.5 h-4 w-4" /> Edit</Button>
+                          <Button variant="destructive" size="sm" onClick={(e) => { e.stopPropagation(); openDeleteYearDialog(year);}} disabled={anyProcessing}><Trash2 className="mr-1.5 h-4 w-4" /> Delete</Button>
                         </div>
                       </CardContent>
                     </Card>
@@ -443,15 +574,15 @@ export default function DepartmentsPage() {
         <Card className="mt-6">
           <CardHeader>
             <CardTitle className="flex items-center"><ListTree className="mr-2 h-6 w-6 text-primary" />Manage Specialities for {selectedYear.name} ({selectedDepartment.name})</CardTitle>
-            <CardDescription>Add, edit, or delete specialities for the selected year.</CardDescription>
+            <CardDescription>Add, edit, or delete specialities. Click a speciality to manage its groups.</CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleAddSpeciality} className="flex items-end gap-4 mb-6 pb-6 border-b">
               <div className="flex-grow space-y-2">
                 <Label htmlFor="newSpecialityName">New Speciality Name</Label>
-                <Input id="newSpecialityName" type="text" placeholder="e.g., Software Development" value={newSpecialityName} onChange={(e) => setNewSpecialityName(e.target.value)} disabled={isProcessingSpeciality} />
+                <Input id="newSpecialityName" type="text" placeholder="e.g., Software Development" value={newSpecialityName} onChange={(e) => setNewSpecialityName(e.target.value)} disabled={anyProcessing} />
               </div>
-              <Button type="submit" disabled={isProcessingSpeciality || !newSpecialityName.trim()}>
+              <Button type="submit" disabled={anyProcessing || !newSpecialityName.trim()}>
                 {isProcessingSpeciality && !editingSpeciality && !specialityToDelete ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PlusCircle className="mr-2 h-4 w-4" />} Add Speciality
               </Button>
             </form>
@@ -460,12 +591,53 @@ export default function DepartmentsPage() {
               : specialities.length === 0 ? <p className="text-muted-foreground text-center py-4">No specialities found for this year.</p>
               : <div className="space-y-3">
                   {specialities.map((spec) => (
-                    <Card key={spec.id} className="bg-background hover:shadow-sm transition-shadow">
-                      <CardContent className="p-4 flex items-center justify-between">
-                        <span className="font-medium text-card-foreground">{spec.name}</span>
+                    <Card key={spec.id} className={cn("bg-background hover:shadow-sm transition-shadow cursor-pointer", selectedSpeciality?.id === spec.id && "ring-2 ring-primary-foreground shadow-md bg-primary/10")} onClick={() => handleSelectSpeciality(spec)}>
+                       <CardContent className="p-4 flex items-center justify-between">
+                        <div className="flex items-center">
+                           <ChevronRight className={cn("h-5 w-5 text-muted-foreground transition-transform", selectedSpeciality?.id === spec.id && "rotate-90 text-primary")} />
+                           <span className={cn("ml-2 font-medium text-card-foreground", selectedSpeciality?.id === spec.id && "text-primary")}>{spec.name}</span>
+                        </div>
                         <div className="space-x-2">
-                          <Button variant="outline" size="sm" onClick={() => openEditSpecialityDialog(spec)} disabled={isProcessingSpeciality || isProcessingDepartment || isProcessingYear}><Edit3 className="mr-1.5 h-4 w-4" /> Edit</Button>
-                          <Button variant="destructive" size="sm" onClick={() => openDeleteSpecialityDialog(spec)} disabled={isProcessingSpeciality || isProcessingDepartment || isProcessingYear}><Trash2 className="mr-1.5 h-4 w-4" /> Delete</Button>
+                          <Button variant="outline" size="sm" onClick={(e) => {e.stopPropagation(); openEditSpecialityDialog(spec);}} disabled={anyProcessing}><Edit3 className="mr-1.5 h-4 w-4" /> Edit</Button>
+                          <Button variant="destructive" size="sm" onClick={(e) => {e.stopPropagation(); openDeleteSpecialityDialog(spec);}} disabled={anyProcessing}><Trash2 className="mr-1.5 h-4 w-4" /> Delete</Button>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+            }
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Groups Management Card */}
+      {selectedDepartment && selectedYear && selectedSpeciality && (
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle className="flex items-center"><Users className="mr-2 h-6 w-6 text-primary" />Manage Groups for {selectedSpeciality.name} ({selectedYear.name}, {selectedDepartment.name})</CardTitle>
+            <CardDescription>Add, edit, or delete groups for the selected speciality.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleAddGroup} className="flex items-end gap-4 mb-6 pb-6 border-b">
+              <div className="flex-grow space-y-2">
+                <Label htmlFor="newGroupName">New Group Name</Label>
+                <Input id="newGroupName" type="text" placeholder="e.g., Group A" value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} disabled={anyProcessing} />
+              </div>
+              <Button type="submit" disabled={anyProcessing || !newGroupName.trim()}>
+                {isProcessingGroup && !editingGroup && !groupToDelete ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PlusCircle className="mr-2 h-4 w-4" />} Add Group
+              </Button>
+            </form>
+            <h3 className="text-lg font-semibold mb-4 text-foreground">Existing Groups</h3>
+            {isLoadingGroups ? <div className="flex items-center justify-center py-8"><Loader2 className="mr-2 h-8 w-8 animate-spin text-primary" /><p className="text-muted-foreground">Loading groups...</p></div>
+              : groups.length === 0 ? <p className="text-muted-foreground text-center py-4">No groups found for this speciality.</p>
+              : <div className="space-y-3">
+                  {groups.map((group) => (
+                    <Card key={group.id} className="bg-background hover:shadow-sm transition-shadow">
+                      <CardContent className="p-4 flex items-center justify-between">
+                        <span className="font-medium text-card-foreground">{group.name}</span>
+                        <div className="space-x-2">
+                          <Button variant="outline" size="sm" onClick={() => openEditGroupDialog(group)} disabled={anyProcessing}><Edit3 className="mr-1.5 h-4 w-4" /> Edit</Button>
+                          <Button variant="destructive" size="sm" onClick={() => openDeleteGroupDialog(group)} disabled={anyProcessing}><Trash2 className="mr-1.5 h-4 w-4" /> Delete</Button>
                         </div>
                       </CardContent>
                     </Card>
@@ -487,7 +659,7 @@ export default function DepartmentsPage() {
       {/* Delete Department Dialog */}
       <AlertDialog open={showDeleteDepartmentConfirmDialog} onOpenChange={(isOpen) => { setShowDeleteDepartmentConfirmDialog(isOpen); if (!isOpen) setDepartmentToDelete(null); }}>
         <AlertDialogContent>
-          <AlertDialogHeader><AlertDialogTitle>Delete Department?</AlertDialogTitle><AlertDialogDescription>This permanently deletes "{departmentToDelete?.name}". Associated years/specialities will be orphaned.</AlertDialogDescription></AlertDialogHeader>
+          <AlertDialogHeader><AlertDialogTitle>Delete Department?</AlertDialogTitle><AlertDialogDescription>This permanently deletes "{departmentToDelete?.name}". Associated years, specialities, and groups will also be effectively orphaned or deleted (depending on Firestore rules/functions).</AlertDialogDescription></AlertDialogHeader>
           <AlertDialogFooter><AlertDialogCancel disabled={isProcessingDepartment}>Cancel</AlertDialogCancel><AlertDialogAction onClick={handleDeleteDepartment} className="bg-destructive hover:bg-destructive/90" disabled={isProcessingDepartment}>{isProcessingDepartment && departmentToDelete ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}Delete</AlertDialogAction></AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -503,7 +675,7 @@ export default function DepartmentsPage() {
       {/* Delete Year Dialog */}
       <AlertDialog open={showDeleteYearConfirmDialog} onOpenChange={(isOpen) => { setShowDeleteYearConfirmDialog(isOpen); if (!isOpen) setYearToDelete(null); }}>
         <AlertDialogContent>
-          <AlertDialogHeader><AlertDialogTitle>Delete Year?</AlertDialogTitle><AlertDialogDescription>This permanently deletes "{yearToDelete?.name}" from "{selectedDepartment?.name}". Associated specialities will be orphaned.</AlertDialogDescription></AlertDialogHeader>
+          <AlertDialogHeader><AlertDialogTitle>Delete Year?</AlertDialogTitle><AlertDialogDescription>This permanently deletes "{yearToDelete?.name}" from "{selectedDepartment?.name}". Associated specialities and groups will be orphaned.</AlertDialogDescription></AlertDialogHeader>
           <AlertDialogFooter><AlertDialogCancel disabled={isProcessingYear}>Cancel</AlertDialogCancel><AlertDialogAction onClick={handleDeleteYear} className="bg-destructive hover:bg-destructive/90" disabled={isProcessingYear}>{isProcessingYear && yearToDelete ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}Delete</AlertDialogAction></AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -519,8 +691,24 @@ export default function DepartmentsPage() {
       {/* Delete Speciality Dialog */}
       <AlertDialog open={showDeleteSpecialityConfirmDialog} onOpenChange={(isOpen) => { setShowDeleteSpecialityConfirmDialog(isOpen); if (!isOpen) setSpecialityToDelete(null); }}>
         <AlertDialogContent>
-          <AlertDialogHeader><AlertDialogTitle>Delete Speciality?</AlertDialogTitle><AlertDialogDescription>This permanently deletes speciality "{specialityToDelete?.name}" from year "{selectedYear?.name}" in department "{selectedDepartment?.name}".</AlertDialogDescription></AlertDialogHeader>
+          <AlertDialogHeader><AlertDialogTitle>Delete Speciality?</AlertDialogTitle><AlertDialogDescription>This permanently deletes speciality "{specialityToDelete?.name}" from year "{selectedYear?.name}" in department "{selectedDepartment?.name}". Associated groups will be orphaned.</AlertDialogDescription></AlertDialogHeader>
           <AlertDialogFooter><AlertDialogCancel disabled={isProcessingSpeciality}>Cancel</AlertDialogCancel><AlertDialogAction onClick={handleDeleteSpeciality} className="bg-destructive hover:bg-destructive/90" disabled={isProcessingSpeciality}>{isProcessingSpeciality && specialityToDelete ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}Delete</AlertDialogAction></AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+       {/* Edit Group Dialog */}
+      <Dialog open={showEditGroupDialog} onOpenChange={(isOpen) => { setShowEditGroupDialog(isOpen); if (!isOpen) setEditingGroup(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Edit Group</DialogTitle><DialogDescription>Update group name for {selectedSpeciality?.name} in {selectedYear?.name} ({selectedDepartment?.name}).</DialogDescription></DialogHeader>
+          <div className="space-y-2 py-2"><Label htmlFor="editGroupName">Group Name</Label><Input id="editGroupName" value={groupToEditName} onChange={(e) => setGroupToEditName(e.target.value)} disabled={isProcessingGroup}/></div>
+          <DialogFooter><DialogClose asChild><Button variant="outline" disabled={isProcessingGroup}>Cancel</Button></DialogClose><Button onClick={handleUpdateGroup} disabled={isProcessingGroup || !groupToEditName.trim() || groupToEditName.trim() === editingGroup?.name}>{isProcessingGroup && editingGroup ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}Save</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {/* Delete Group Dialog */}
+      <AlertDialog open={showDeleteGroupConfirmDialog} onOpenChange={(isOpen) => { setShowDeleteGroupConfirmDialog(isOpen); if (!isOpen) setGroupToDelete(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader><AlertDialogTitle>Delete Group?</AlertDialogTitle><AlertDialogDescription>This permanently deletes group "{groupToDelete?.name}" from speciality "{selectedSpeciality?.name}" in year "{selectedYear?.name}" of department "{selectedDepartment?.name}".</AlertDialogDescription></AlertDialogHeader>
+          <AlertDialogFooter><AlertDialogCancel disabled={isProcessingGroup}>Cancel</AlertDialogCancel><AlertDialogAction onClick={handleDeleteGroup} className="bg-destructive hover:bg-destructive/90" disabled={isProcessingGroup}>{isProcessingGroup && groupToDelete ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}Delete</AlertDialogAction></AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
     </div>

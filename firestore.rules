@@ -3,24 +3,37 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Admin-only access to departments
+    // Admin user can read/write 'departments'
     match /departments/{departmentId} {
       allow read, write: if request.auth != null && request.auth.uid == 'YOUR_ADMIN_UID_HERE';
     }
 
-    // User-specific access to their own user document
+    // Users can create their own user document
+    // Users can read their own user document
+    // Admin can read/update any user document (useful for admin panel)
     match /users/{userId} {
-      // Allow user creation if the user is authenticated and the document ID matches their UID
       allow create: if request.auth != null && request.auth.uid == userId;
-      // Allow users to read their own document
-      allow read: if request.auth != null && request.auth.uid == userId;
-      // Allow users to update their own document (optional, add fields control if needed)
-      // allow update: if request.auth != null && request.auth.uid == userId; 
-      // Disallow delete for now, unless specifically required
-      // allow delete: if false; 
+      allow read: if request.auth != null && (request.auth.uid == userId || request.auth.uid == 'YOUR_ADMIN_UID_HERE');
+      allow update: if request.auth != null && (request.auth.uid == userId || request.auth.uid == 'YOUR_ADMIN_UID_HERE'); // User can update their own, admin can update any
+      // Admin should be able to delete users if needed
+      allow delete: if request.auth != null && request.auth.uid == 'YOUR_ADMIN_UID_HERE';
     }
 
-    // Default deny all other access
+    // Rules for the 'groups' collection
+    // Allow authenticated users to read groups (for teachers to check assignments, students to see group info if needed)
+    // Allow admin to create, update, delete groups
+    match /groups/{groupId} {
+      allow read: if request.auth != null;
+      allow create, update, delete: if request.auth != null && request.auth.uid == 'YOUR_ADMIN_UID_HERE';
+    }
+    
+    match /groups/{groupId}/schedule/{scheduleId} {
+       allow read: if request.auth != null;
+       allow create, update, delete: if request.auth != null && request.auth.uid == 'YOUR_ADMIN_UID_HERE';
+    }
+
+
+    // Default deny all other access to unspecified collections/documents
     match /{document=**} {
       allow read, write: if false;
     }

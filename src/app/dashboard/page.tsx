@@ -628,9 +628,8 @@ export default function DashboardPage() {
         )}
       </main>
       <footer className="py-4 text-center text-sm text-muted-foreground border-t">
-        <p>Data Dashboard Lite &copy; {new Date().getFullYear()}</p>
+        <p>Edutrack &copy; {new Date().getFullYear()}</p>
       </footer>
     </div>
   );
 }
-

@@ -3,8 +3,8 @@ import './globals.css';
 import { Providers } from '@/components/providers';
 
 export const metadata: Metadata = {
-  title: 'Data Dashboard Lite',
-  description: 'Visualize your data with smart chart suggestions.',
+  title: 'Edutrack',
+  description: 'Your comprehensive education tracking platform.',
 };
 
 export default function RootLayout({

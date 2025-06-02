@@ -1,6 +1,6 @@
 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { BarChart3, Building, Users, UserCog, BookOpenText } from 'lucide-react';
+import { BarChart3, Building, Users, UserCog, BookOpenText, GraduationCap } from 'lucide-react';
 import Link from 'next/link';
 
 export default function AdminDashboardOverviewPage() {
@@ -16,10 +16,10 @@ export default function AdminDashboardOverviewPage() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center">
-            <BarChart3 className="mr-2 h-6 w-6 text-primary" />
+            <GraduationCap className="mr-2 h-6 w-6 text-primary" />
             Admin Dashboard Overview
           </CardTitle>
-          <CardDescription>Welcome to the Data Dashboard Lite admin control panel. From here, you can manage all aspects of the application.</CardDescription>
+          <CardDescription>Welcome to the Edutrack admin control panel. From here, you can manage all aspects of the application.</CardDescription>
         </CardHeader>
         <CardContent>
           <p>Select an option from the sidebar or use the quick links below to navigate to different management sections.</p>

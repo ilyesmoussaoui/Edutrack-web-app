@@ -15,7 +15,7 @@ export default function SignUpPage() {
           <CardHeader className="text-center">
             <CardTitle className="text-3xl font-headline">Create Account</CardTitle>
             <CardDescription>
-              Join Data Dashboard Lite.
+              Join Edutrack.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4 pt-2">
@@ -60,7 +60,7 @@ export default function SignUpPage() {
         </Card>
       </main>
       <footer className="py-4 text-center text-sm text-muted-foreground border-t">
-        <p>Data Dashboard Lite &copy; {new Date().getFullYear()}</p>
+        <p>Edutrack &copy; {new Date().getFullYear()}</p>
       </footer>
     </div>
   );

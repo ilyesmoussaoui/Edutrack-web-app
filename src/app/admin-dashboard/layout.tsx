@@ -41,7 +41,7 @@ export default function AdminDashboardLayout({
         </div>
       </SidebarProvider>
       <footer className="py-4 text-center text-sm text-muted-foreground border-t">
-        <p>Data Dashboard Lite Admin &copy; {new Date().getFullYear()}</p>
+        <p>Edutrack Admin &copy; {new Date().getFullYear()}</p>
       </footer>
     </div>
   );

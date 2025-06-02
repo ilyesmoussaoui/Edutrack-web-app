@@ -31,7 +31,7 @@ export default function LandingPage() {
         </Card>
       </main>
       <footer className="py-4 text-center text-sm text-muted-foreground border-t">
-        <p>Data Dashboard Lite &copy; {new Date().getFullYear()}</p>
+        <p>Edutrack &copy; {new Date().getFullYear()}</p>
         <div className="mt-2">
           <Link href="/admin" className="text-xs hover:underline text-muted-foreground hover:text-foreground transition-colors">
             Admin Panel

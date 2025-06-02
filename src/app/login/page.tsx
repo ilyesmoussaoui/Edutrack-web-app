@@ -1,3 +1,4 @@
+
 "use client";
 
 import type { FormEvent } from 'react';
@@ -58,10 +59,11 @@ export default function CombinedAuthPage() {
     } catch (err: any) {
       if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
         setLoginError('Invalid email or password.');
+        console.warn(`Login attempt failed (handled): ${err.code}. User shown 'Invalid email or password'. Details: ${err.message}`);
       } else {
         setLoginError(err.message || 'Failed to login. Please try again.');
+        console.error("Login error (unhandled code):", err); 
       }
-      console.error("Login error:", err);
     } finally {
       setLoginLoading(false);
     }
@@ -92,12 +94,14 @@ export default function CombinedAuthPage() {
     } catch (err: any) {
       if (err.code === 'auth/email-already-in-use') {
         setSignUpError('This email address is already in use.');
+        console.warn(`Sign up attempt failed (handled): ${err.code}. User shown 'email already in use'. Details: ${err.message}`);
       } else if (err.code === 'auth/weak-password') {
         setSignUpError('The password is too weak. Please use a stronger password.');
+        console.warn(`Sign up attempt failed (handled): ${err.code}. User shown 'password too weak'. Details: ${err.message}`);
       } else {
         setSignUpError(err.message || 'Failed to create account. Please try again.');
+        console.error("Sign up error (unhandled code):", err);
       }
-      console.error("Sign up error:", err);
     } finally {
       setSignUpLoading(false);
     }
@@ -231,3 +235,4 @@ export default function CombinedAuthPage() {
     </div>
   );
 }
+

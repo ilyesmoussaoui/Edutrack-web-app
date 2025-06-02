@@ -1,0 +1,18 @@
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Allow admin full access to 'departments' collection
+    // IMPORTANT: Replace 'YOUR_ADMIN_UID_HERE' with your actual admin user's UID.
+    match /departments/{departmentId} {
+      allow read, write: if request.auth != null && request.auth.uid == 'YOUR_ADMIN_UID_HERE';
+    }
+
+    // Add rules for other collections as needed.
+    // For now, deny access to all other collections by default to maintain security.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

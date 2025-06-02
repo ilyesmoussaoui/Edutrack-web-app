@@ -9,7 +9,8 @@ import { auth, db } from '@/lib/firebase';
 import { AppHeader } from '@/components/layout/app-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Loader2, AlertTriangle, LogOut, CalendarDays, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogClose } from "@/components/ui/dialog";
+import { Loader2, AlertTriangle, LogOut, CalendarDays, ChevronLeft, ChevronRight, Info } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface UserData {
@@ -18,10 +19,11 @@ interface UserData {
   email: string;
   role: 'Student' | 'Teacher' | string;
   assignedGroupId?: string;
+  // For students, potentially store denormalized path components if needed, or fetch group details separately.
 }
 
 interface ScheduleSlotFetched {
-  id: string; // Firestore document ID of the schedule slot
+  id: string; 
   day: string;
   time: string;
   moduleName: string;
@@ -32,11 +34,6 @@ interface ScheduleSlotFetched {
   groupName: string;
 }
 
-interface TeacherScheduleDisplaySlot {
-  moduleName: string;
-  groupName: string;
-  roomHall: string;
-}
 
 const DAYS_OF_WEEK = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"];
 const TIME_SLOTS = [
@@ -53,17 +50,28 @@ export default function DashboardPage() {
   const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
   const [userData, setUserData] = useState<UserData | null>(null);
   const [displayMessage, setDisplayMessage] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingUser, setIsLoadingUser] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [teacherSchedule, setTeacherSchedule] = useState<Map<string, TeacherScheduleDisplaySlot>>(new Map());
+  const [teacherSchedule, setTeacherSchedule] = useState<Map<string, ScheduleSlotFetched>>(new Map());
   const [isLoadingTeacherSchedule, setIsLoadingTeacherSchedule] = useState(false);
-  // Placeholder for week navigation - functionality to change dates is not yet implemented
+  
+  const [studentSchedule, setStudentSchedule] = useState<Map<string, ScheduleSlotFetched>>(new Map());
+  const [isLoadingStudentSchedule, setIsLoadingStudentSchedule] = useState(false);
+
+  const [showClassDetailsModal, setShowClassDetailsModal] = useState(false);
+  const [selectedClassSlotDetails, setSelectedClassSlotDetails] = useState<ScheduleSlotFetched | null>(null);
+
   const [currentWeekIdentifier, setCurrentWeekIdentifier] = useState<string>("This Week's Recurring Schedule"); 
 
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
-      setIsLoading(true); // Reset loading state for auth changes
+      setIsLoadingUser(true); 
+      setError(null); 
+      setDisplayMessage(null);
+      setTeacherSchedule(new Map()); 
+      setStudentSchedule(new Map());
+
       if (user) {
         setCurrentUser(user);
         try {
@@ -74,11 +82,8 @@ export default function DashboardPage() {
             const fetchedUserData = { uid: user.uid, ...userDocSnap.data() } as UserData;
             setUserData(fetchedUserData);
             
-            // Initial message setup, might be overridden by schedule specific logic below
             if (fetchedUserData.role === 'Student' && !fetchedUserData.assignedGroupId) {
               setDisplayMessage('Please wait until the Admin assigns you to a group/program.');
-            } else {
-              setDisplayMessage(null); 
             }
           } else {
             setError("User data not found. Please sign up again or contact support.");
@@ -88,29 +93,23 @@ export default function DashboardPage() {
         } catch (err: any) {
           console.error("Error fetching user data:", err);
           setError("Failed to load dashboard data. Please try again.");
-          setDisplayMessage(null);
         }
       } else {
         router.push('/login');
         setUserData(null);
         setCurrentUser(null);
       }
-      setIsLoading(false);
+      setIsLoadingUser(false);
     });
 
     return () => unsubscribeAuth();
   }, [router]);
 
+  // Effect for Teacher's schedule
   useEffect(() => {
-    if (userData?.role === 'Teacher' && currentUser) {
-      if (displayMessage === 'Please wait until the Admin assigns you to a group/program.') {
-         // This check ensures we don't try to load schedule if the generic "not assigned" message should be shown
-         // based on initial check for teachers (which was removed, so this specific path might not be hit as before)
-         // For now, we always attempt to load schedule if role is Teacher.
-      }
-
+    if (userData?.role === 'Teacher' && currentUser && !displayMessage) {
       setIsLoadingTeacherSchedule(true);
-      setTeacherSchedule(new Map()); // Clear previous schedule
+      setTeacherSchedule(new Map());
 
       const scheduleQuery = query(
         collectionGroup(db, 'schedule'),
@@ -118,24 +117,20 @@ export default function DashboardPage() {
       );
 
       const unsubscribeSchedule = onSnapshot(scheduleQuery, (snapshot) => {
-        const newSchedule = new Map<string, TeacherScheduleDisplaySlot>();
+        const newSchedule = new Map<string, ScheduleSlotFetched>();
         let hasAssignments = false;
         snapshot.forEach((docSnap) => {
-          const slotData = docSnap.data() as ScheduleSlotFetched;
+          const slotData = { id: docSnap.id, ...docSnap.data() } as ScheduleSlotFetched;
           const slotKey = createSlotKey(slotData.day, slotData.time);
-          newSchedule.set(slotKey, {
-            moduleName: slotData.moduleName,
-            groupName: slotData.groupName,
-            roomHall: slotData.roomHall,
-          });
+          newSchedule.set(slotKey, slotData);
           hasAssignments = true;
         });
         setTeacherSchedule(newSchedule);
         
         if (!hasAssignments) {
-            setDisplayMessage('Please wait until the Admin assigns you to a group/program, or you have no classes in the recurring schedule.');
+            setDisplayMessage('You have no classes in your recurring schedule, or please wait for admin assignment.');
         } else {
-            setDisplayMessage(null); // Clear message if assignments found
+            setDisplayMessage(null); 
         }
         setIsLoadingTeacherSchedule(false);
       }, (err) => {
@@ -146,27 +141,75 @@ export default function DashboardPage() {
 
       return () => unsubscribeSchedule();
     } else if (userData?.role !== 'Teacher') {
-      setTeacherSchedule(new Map()); // Clear schedule if not a teacher
+      setTeacherSchedule(new Map()); 
     }
-  }, [userData, currentUser]);
+  }, [userData, currentUser, displayMessage]);
+
+  // Effect for Student's schedule
+  useEffect(() => {
+    if (userData?.role === 'Student' && userData.assignedGroupId && currentUser && !displayMessage) {
+      setIsLoadingStudentSchedule(true);
+      setStudentSchedule(new Map());
+
+      const scheduleQuery = query(
+        collectionGroup(db, 'schedule'),
+        where('groupId', '==', userData.assignedGroupId)
+      );
+      
+      const unsubscribeSchedule = onSnapshot(scheduleQuery, (snapshot) => {
+        const newSchedule = new Map<string, ScheduleSlotFetched>();
+        let groupHasSchedule = false;
+        snapshot.forEach((docSnap) => {
+          const slotData = { id: docSnap.id, ...docSnap.data() } as ScheduleSlotFetched;
+          const slotKey = createSlotKey(slotData.day, slotData.time);
+          newSchedule.set(slotKey, slotData);
+          groupHasSchedule = true;
+        });
+        setStudentSchedule(newSchedule);
+
+        if (!groupHasSchedule) {
+            setDisplayMessage('Your assigned group currently has no schedule. Please check back later or contact an admin.');
+        } else {
+            setDisplayMessage(null);
+        }
+        setIsLoadingStudentSchedule(false);
+      }, (err) => {
+        console.error("Error fetching student schedule:", err);
+        setError(`Failed to load schedule for your group. ${err.message}`);
+        setIsLoadingStudentSchedule(false);
+      });
+
+      return () => unsubscribeSchedule();
+    } else if (userData?.role !== 'Student' || !userData?.assignedGroupId) {
+      setStudentSchedule(new Map());
+    }
+  }, [userData, currentUser, displayMessage]);
 
 
   const handleLogout = async () => {
-    setIsLoading(true);
+    setIsLoadingUser(true);
     try {
       await signOut(auth);
       router.push('/');
     } catch (err) {
       console.error("Logout error:", err);
       setError("Failed to logout. Please try again.");
-      setIsLoading(false);
+      setIsLoadingUser(false);
     }
   };
   
-  const mainLoading = isLoading || (userData?.role === 'Teacher' && isLoadingTeacherSchedule && !displayMessage);
+  const handleSlotClick = (slotData: ScheduleSlotFetched) => {
+    setSelectedClassSlotDetails(slotData);
+    setShowClassDetailsModal(true);
+  };
 
+  const mainLoading = isLoadingUser || 
+                      (userData?.role === 'Teacher' && isLoadingTeacherSchedule && !displayMessage) ||
+                      (userData?.role === 'Student' && userData.assignedGroupId && isLoadingStudentSchedule && !displayMessage);
 
-  if (mainLoading) {
+  const currentScheduleMap = userData?.role === 'Teacher' ? teacherSchedule : studentSchedule;
+
+  if (mainLoading && !displayMessage && !error) {
     return (
       <div className="flex flex-col min-h-screen bg-background">
         <AppHeader />
@@ -186,7 +229,7 @@ export default function DashboardPage() {
           <h2 className="text-2xl font-headline font-semibold">
             Dashboard {userData?.fullName ? `- Welcome, ${userData.fullName}!` : ''}
           </h2>
-          <Button variant="outline" onClick={handleLogout} disabled={isLoading}>
+          <Button variant="outline" onClick={handleLogout} disabled={isLoadingUser}>
             <LogOut className="mr-2 h-4 w-4" />
             Logout
           </Button>
@@ -209,30 +252,26 @@ export default function DashboardPage() {
           <CardHeader>
             <CardTitle className="flex items-center">
               <CalendarDays className="mr-2 h-6 w-6 text-primary" />
-              {displayMessage ? "Important Message" : (userData?.role === 'Student' ? "Your Schedule (Details Coming Soon)" : "Your Weekly Recurring Schedule")}
+              {displayMessage ? "Important Message" : "Your Weekly Recurring Schedule"}
             </CardTitle>
             {userData && <CardDescription>Role: {userData.role}</CardDescription>}
           </CardHeader>
           <CardContent>
             {displayMessage ? (
               <p className="text-lg text-center py-8 px-4 bg-secondary/30 rounded-md">{displayMessage}</p>
-            ) : userData?.role === 'Student' ? (
-              <div>
-                <p>Your student-specific schedule view will be implemented here soon.</p>
-              </div>
-            ) : userData?.role === 'Teacher' ? (
+            ) : (userData?.role === 'Teacher' || (userData?.role === 'Student' && userData.assignedGroupId)) ? (
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
-                  <Button variant="outline" size="sm" disabled> {/* Placeholder */}
+                  <Button variant="outline" size="sm" disabled> 
                     <ChevronLeft className="h-4 w-4 mr-1" /> Previous Week
                   </Button>
                   <p className="text-sm font-medium text-muted-foreground">{currentWeekIdentifier}</p>
-                  <Button variant="outline" size="sm" disabled> {/* Placeholder */}
+                  <Button variant="outline" size="sm" disabled> 
                     Next Week <ChevronRight className="h-4 w-4 ml-1" />
                   </Button>
                 </div>
                 <div className="grid grid-cols-[auto_repeat(5,minmax(0,1fr))] gap-px border rounded-lg p-px bg-border overflow-hidden">
-                  <div className="p-2 text-xs font-medium text-muted-foreground bg-muted"></div> {/* Time header corner */}
+                  <div className="p-2 text-xs font-medium text-muted-foreground bg-muted"></div> 
                   {DAYS_OF_WEEK.map((day) => (
                     <div key={day} className="font-semibold p-2 border-b border-r border-border text-center bg-muted text-sm text-foreground">
                       {day}
@@ -245,25 +284,28 @@ export default function DashboardPage() {
                       </div>
                       {DAYS_OF_WEEK.map((day) => {
                         const slotKey = createSlotKey(day, timeSlot);
-                        const scheduledClass = teacherSchedule.get(slotKey);
+                        const scheduledClass = currentScheduleMap.get(slotKey);
                         return (
                           <div
                             key={`${day}-${timeSlot}`}
                             className={cn(
                               "border-r border-b border-border min-h-[100px] bg-background p-1.5 text-xs leading-tight",
+                              scheduledClass && "cursor-pointer hover:bg-accent/50 transition-colors",
                               day === DAYS_OF_WEEK[DAYS_OF_WEEK.length -1] && "border-r-0",
                               timeSlot === TIME_SLOTS[TIME_SLOTS.length -1] && "border-b-0"
                             )}
+                            onClick={scheduledClass ? () => handleSlotClick(scheduledClass) : undefined}
                           >
                             {scheduledClass ? (
                               <div className="flex flex-col h-full">
                                 <p className="font-semibold text-primary truncate">{scheduledClass.moduleName}</p>
-                                <p className="text-muted-foreground truncate">Group: {scheduledClass.groupName}</p>
+                                {userData.role === 'Teacher' && <p className="text-muted-foreground truncate">Group: {scheduledClass.groupName}</p>}
+                                {userData.role === 'Student' && <p className="text-muted-foreground truncate">Teacher: {scheduledClass.teacherName}</p>}
                                 <p className="text-muted-foreground truncate mt-auto pt-1">@{scheduledClass.roomHall}</p>
                               </div>
                             ) : (
-                              <div className="h-full flex items-center justify-center text-muted-foreground/70">
-                                {/* Empty slot */}
+                              <div className="h-full flex items-center justify-center text-muted-foreground/30">
+                                <Info className="h-4 w-4"/>
                               </div>
                             )}
                           </div>
@@ -272,15 +314,41 @@ export default function DashboardPage() {
                     </React.Fragment>
                   ))}
                 </div>
-                {teacherSchedule.size === 0 && !isLoadingTeacherSchedule && !displayMessage && (
+                {currentScheduleMap.size === 0 && !isLoadingTeacherSchedule && !isLoadingStudentSchedule && !displayMessage && (
                     <p className="text-center text-muted-foreground py-4">You have no classes in your recurring schedule.</p>
                 )}
               </div>
             ) : (
-                 <p>Loading or role not applicable for this view.</p>
+                 <p className="text-center text-muted-foreground py-4">Loading schedule or role not applicable for this view.</p>
             )}
           </CardContent>
         </Card>
+
+        {selectedClassSlotDetails && (
+          <Dialog open={showClassDetailsModal} onOpenChange={setShowClassDetailsModal}>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>Class Details</DialogTitle>
+                <DialogDescription>
+                  Information for the selected class slot.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-3 py-4 text-sm">
+                <p><strong>Module:</strong> {selectedClassSlotDetails.moduleName}</p>
+                <p><strong>Teacher:</strong> {selectedClassSlotDetails.teacherName}</p>
+                <p><strong>Group:</strong> {selectedClassSlotDetails.groupName}</p>
+                <p><strong>Room/Hall:</strong> {selectedClassSlotDetails.roomHall}</p>
+                <p><strong>Day:</strong> {selectedClassSlotDetails.day}</p>
+                <p><strong>Time:</strong> {selectedClassSlotDetails.time}</p>
+                <p><strong>Date:</strong> Recurring weekly ({currentWeekIdentifier.replace("This Week's Recurring Schedule", "Recurring")})</p>
+              </div>
+               <DialogClose asChild>
+                  <Button type="button" variant="outline">Close</Button>
+                </DialogClose>
+            </DialogContent>
+          </Dialog>
+        )}
+
       </main>
       <footer className="py-4 text-center text-sm text-muted-foreground border-t">
         <p>Data Dashboard Lite &copy; {new Date().getFullYear()}</p>
@@ -288,5 +356,3 @@ export default function DashboardPage() {
     </div>
   );
 }
-
-    

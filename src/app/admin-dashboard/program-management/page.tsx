@@ -2,18 +2,22 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { collection, query, orderBy, getDocs, doc } from 'firebase/firestore';
+import { collection, query, orderBy, getDocs, where, type Timestamp, doc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card';
+import { Card, CardHeader, CardTitle, CardContent, CardDescription, CardFooter } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Loader2, BookOpenText } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogClose } from "@/components/ui/dialog";
+import { Loader2, BookOpenText, Edit3 } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 
 interface Department { id: string; name: string; }
 interface Year { id: string; name: string; }
 interface Speciality { id: string; name: string; }
 interface Group { id: string; name: string; departmentId: string, yearId: string, specialityId: string }
+interface Teacher { uid: string; fullName: string; }
 
 const DAYS_OF_WEEK = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"];
 const TIME_SLOTS = [
@@ -30,6 +34,7 @@ export default function ProgramManagementPage() {
   const [years, setYears] = useState<Year[]>([]);
   const [specialities, setSpecialities] = useState<Speciality[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
+  const [availableTeachers, setAvailableTeachers] = useState<Teacher[]>([]);
 
   const [selectedDepartmentId, setSelectedDepartmentId] = useState('');
   const [selectedYearId, setSelectedYearId] = useState('');
@@ -40,8 +45,17 @@ export default function ProgramManagementPage() {
   const [isLoadingYears, setIsLoadingYears] = useState(false);
   const [isLoadingSpecs, setIsLoadingSpecs] = useState(false);
   const [isLoadingGroups, setIsLoadingGroups] = useState(false);
+  const [isLoadingTeachers, setIsLoadingTeachers] = useState(false);
 
   const [selectedGroupDetails, setSelectedGroupDetails] = useState<Group | null>(null);
+
+  const [showSlotModal, setShowSlotModal] = useState(false);
+  const [selectedSlot, setSelectedSlot] = useState<{ day: string; time: string } | null>(null);
+  const [modalTeacherId, setModalTeacherId] = useState('');
+  const [modalModuleName, setModalModuleName] = useState('');
+  const [modalRoomHall, setModalRoomHall] = useState('');
+  const [isSavingSlot, setIsSavingSlot] = useState(false);
+
 
   useEffect(() => {
     const fetchDepartments = async () => {
@@ -149,6 +163,27 @@ export default function ProgramManagementPage() {
     }
   }, [selectedGroupId, groups]);
 
+  const fetchTeachers = useCallback(async () => {
+    if (availableTeachers.length > 0) return; // Don't refetch if already loaded
+
+    setIsLoadingTeachers(true);
+    try {
+      const teachersQuery = query(
+        collection(db, "users"),
+        where("role", "==", "Teacher"),
+        orderBy("fullName", "asc")
+      );
+      const snapshot = await getDocs(teachersQuery);
+      setAvailableTeachers(snapshot.docs.map(doc => ({ uid: doc.id, fullName: doc.data().fullName } as Teacher)));
+    } catch (err) {
+      console.error("Error fetching teachers:", err);
+      toast({ variant: "destructive", title: "Error", description: "Could not load teachers." });
+    } finally {
+      setIsLoadingTeachers(false);
+    }
+  }, [toast, availableTeachers.length]);
+
+
   const getPath = () => {
     let path = "";
     if (selectedDepartmentId) {
@@ -170,6 +205,46 @@ export default function ProgramManagementPage() {
     return path;
   }
 
+  const handleSlotClick = (day: string, time: string) => {
+    setSelectedSlot({ day, time });
+    if (availableTeachers.length === 0) {
+        fetchTeachers();
+    }
+    setModalTeacherId('');
+    setModalModuleName('');
+    setModalRoomHall('');
+    setShowSlotModal(true);
+  };
+
+  const handleSaveSlotDetails = async () => {
+    if (!selectedSlot || !selectedGroupDetails) return;
+    if (!modalTeacherId || !modalModuleName.trim() || !modalRoomHall.trim()) {
+        toast({ variant: "destructive", title: "Validation Error", description: "Please fill all fields: Teacher, Module Name, and Room/Hall." });
+        return;
+    }
+    
+    setIsSavingSlot(true);
+    const slotData = {
+        day: selectedSlot.day,
+        time: selectedSlot.time,
+        teacherId: modalTeacherId,
+        teacherName: availableTeachers.find(t => t.uid === modalTeacherId)?.fullName || 'N/A',
+        moduleName: modalModuleName.trim(),
+        roomHall: modalRoomHall.trim(),
+        groupId: selectedGroupDetails.id,
+    };
+
+    console.log("Saving slot details:", slotData);
+    // Firestore saving logic will be added in the next step.
+
+    // Simulate API call
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    toast({ title: "Slot Details Logged", description: "Check console for details. Firestore saving next." });
+    setIsSavingSlot(false);
+    setShowSlotModal(false);
+  };
+
   return (
     <div className="space-y-6">
       <Card>
@@ -184,7 +259,7 @@ export default function ProgramManagementPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 p-4 border rounded-md shadow-sm">
             <div className="space-y-2">
               <Label htmlFor="department-select">Department</Label>
-              <Select value={selectedDepartmentId} onValueChange={setSelectedDepartmentId} disabled={isLoadingDeps}>
+              <Select value={selectedDepartmentId} onValueChange={setSelectedDepartmentId} disabled={isLoadingDeps || isSavingSlot}>
                 <SelectTrigger id="department-select">
                   <SelectValue placeholder={isLoadingDeps ? "Loading..." : "Select Department"} />
                 </SelectTrigger>
@@ -196,7 +271,7 @@ export default function ProgramManagementPage() {
 
             <div className="space-y-2">
               <Label htmlFor="year-select">Year</Label>
-              <Select value={selectedYearId} onValueChange={setSelectedYearId} disabled={!selectedDepartmentId || isLoadingYears}>
+              <Select value={selectedYearId} onValueChange={setSelectedYearId} disabled={!selectedDepartmentId || isLoadingYears || isSavingSlot}>
                 <SelectTrigger id="year-select" className={!selectedDepartmentId ? "opacity-50 cursor-not-allowed" : ""}>
                   <SelectValue placeholder={isLoadingYears ? "Loading..." : "Select Year"} />
                 </SelectTrigger>
@@ -208,7 +283,7 @@ export default function ProgramManagementPage() {
 
             <div className="space-y-2">
               <Label htmlFor="speciality-select">Speciality</Label>
-              <Select value={selectedSpecialityId} onValueChange={setSelectedSpecialityId} disabled={!selectedYearId || isLoadingSpecs}>
+              <Select value={selectedSpecialityId} onValueChange={setSelectedSpecialityId} disabled={!selectedYearId || isLoadingSpecs || isSavingSlot}>
                 <SelectTrigger id="speciality-select" className={!selectedYearId ? "opacity-50 cursor-not-allowed" : ""}>
                   <SelectValue placeholder={isLoadingSpecs ? "Loading..." : "Select Speciality"} />
                 </SelectTrigger>
@@ -220,7 +295,7 @@ export default function ProgramManagementPage() {
             
             <div className="space-y-2">
               <Label htmlFor="group-select">Group</Label>
-              <Select value={selectedGroupId} onValueChange={setSelectedGroupId} disabled={!selectedSpecialityId || isLoadingGroups}>
+              <Select value={selectedGroupId} onValueChange={setSelectedGroupId} disabled={!selectedSpecialityId || isLoadingGroups || isSavingSlot}>
                 <SelectTrigger id="group-select" className={!selectedSpecialityId ? "opacity-50 cursor-not-allowed" : ""}>
                   <SelectValue placeholder={isLoadingGroups ? "Loading..." : "Select Group"} />
                 </SelectTrigger>
@@ -260,15 +335,13 @@ export default function ProgramManagementPage() {
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-[auto_repeat(5,minmax(0,1fr))] gap-1 border rounded-lg p-1 bg-muted/20">
-              {/* Header Row for Days */}
-              <div className="p-2 text-xs font-medium text-muted-foreground rounded-md"></div> {/* Empty corner for time labels column header */}
+              <div className="p-2 text-xs font-medium text-muted-foreground rounded-md"></div>
               {DAYS_OF_WEEK.map((day) => (
                 <div key={day} className="font-semibold p-2 border rounded-md text-center bg-muted text-sm">
                   {day}
                 </div>
               ))}
 
-              {/* Grid Rows for Time Slots */}
               {TIME_SLOTS.map((timeSlot) => (
                 <React.Fragment key={timeSlot}>
                   <div className="font-semibold p-2 border rounded-md text-center bg-muted text-sm flex items-center justify-center">
@@ -278,9 +351,11 @@ export default function ProgramManagementPage() {
                     <div
                       key={`${day}-${timeSlot}`}
                       className="p-3 border rounded-md min-h-[100px] bg-background hover:bg-accent/50 transition-colors cursor-pointer flex flex-col items-center justify-center text-xs text-muted-foreground"
-                      // onClick={() => handleSlotClick(day, timeSlot)} // This will be added later
+                      onClick={() => handleSlotClick(day, timeSlot)}
                     >
-                      {/* Content for each slot will go here */}
+                       {/* Content for each slot will go here later (e.g., module name, teacher) */}
+                       <Edit3 className="h-4 w-4 text-muted-foreground group-hover:text-primary" />
+                       <span className="mt-1">Add/Edit</span>
                     </div>
                   ))}
                 </React.Fragment>
@@ -289,7 +364,64 @@ export default function ProgramManagementPage() {
           </CardContent>
         </Card>
       )}
+
+      <Dialog open={showSlotModal} onOpenChange={setShowSlotModal}>
+        <DialogContent className="sm:max-w-[480px]">
+          <DialogHeader>
+            <DialogTitle>Set Class Details</DialogTitle>
+            <DialogDescription>
+              For {selectedSlot?.day} at {selectedSlot?.time} in group {selectedGroupDetails?.name}.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="teacher-select-modal">Assigned Teacher</Label>
+              <Select value={modalTeacherId} onValueChange={setModalTeacherId} disabled={isLoadingTeachers || isSavingSlot}>
+                <SelectTrigger id="teacher-select-modal">
+                  <SelectValue placeholder={isLoadingTeachers ? "Loading teachers..." : "Select Teacher"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableTeachers.map(teacher => (
+                    <SelectItem key={teacher.uid} value={teacher.uid}>{teacher.fullName}</SelectItem>
+                  ))}
+                  {availableTeachers.length === 0 && !isLoadingTeachers && <p className="p-2 text-sm text-muted-foreground">No teachers available.</p>}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+                <Label htmlFor="module-name-modal">Module Name</Label>
+                <Input 
+                    id="module-name-modal" 
+                    value={modalModuleName} 
+                    onChange={(e) => setModalModuleName(e.target.value)} 
+                    placeholder="e.g., Introduction to AI"
+                    disabled={isSavingSlot}
+                />
+            </div>
+            <div className="space-y-2">
+                <Label htmlFor="room-hall-modal">Room / Hall</Label>
+                <Input 
+                    id="room-hall-modal" 
+                    value={modalRoomHall} 
+                    onChange={(e) => setModalRoomHall(e.target.value)} 
+                    placeholder="e.g., Amphitheater C"
+                    disabled={isSavingSlot}
+                />
+            </div>
+          </div>
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="outline" disabled={isSavingSlot}>Cancel</Button>
+            </DialogClose>
+            <Button onClick={handleSaveSlotDetails} disabled={isSavingSlot || isLoadingTeachers || !modalTeacherId || !modalModuleName.trim() || !modalRoomHall.trim()}>
+              {isSavingSlot ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Save Details
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
     </div>
   );
 }
-
+    

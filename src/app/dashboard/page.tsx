@@ -153,6 +153,7 @@ export default function DashboardPage() {
           if (userDocSnap.exists()) {
             const fetchedUserData = { uid: user.uid, ...userDocSnap.data() } as UserData;
             setUserData(fetchedUserData);
+            console.log("User Data Fetched:", fetchedUserData); // Log user data including role for verification
             
             if (fetchedUserData.role === 'Student' && !fetchedUserData.assignedGroupId) {
               setDisplayMessage('Please wait until the Admin assigns you to a group/program.');
@@ -296,6 +297,14 @@ export default function DashboardPage() {
       setStudentAttendanceStates(new Map());
 
       try {
+        if (!slotData.groupId) {
+          console.error("Error in handleSlotClick (Teacher): slotData.groupId is undefined.", slotData);
+          toast({ variant: "destructive", title: "Data Integrity Error", description: "Class slot is missing group information. Cannot load students." });
+          setIsLoadingStudentsForModal(false);
+          setShowClassDetailsModal(true); // Keep modal open to show error
+          return;
+        }
+
         const studentsQuery = query(collection(db, 'users'), where('assignedGroupId', '==', slotData.groupId), where('role', '==', 'Student'), orderBy('fullName'));
         const studentDocsSnap = await getDocs(studentsQuery);
         const fetchedStudents = studentDocsSnap.docs.map(doc => ({ uid: doc.id, ...doc.data() } as StudentFromUserDoc));
@@ -324,9 +333,18 @@ export default function DashboardPage() {
         }
         setStudentAttendanceStates(newAttendanceStates);
 
-      } catch (err) {
+      } catch (err: any) {
         console.error("Error fetching students or attendance for modal:", err);
-        toast({ variant: "destructive", title: "Error", description: "Could not load student data for attendance." });
+        let description = "Could not load student data or attendance. Please try again.";
+        if (err.message) {
+            description = `Failed to load data: ${err.message}`;
+        }
+        if (err.code === 'permission-denied') {
+            description = "Permission denied. Check Firestore rules.";
+        } else if (err.message && err.message.toLowerCase().includes('index')) {
+            description = "A Firestore index might be missing or inactive.";
+        }
+        toast({ variant: "destructive", title: "Data Loading Error", description });
       } finally {
         setIsLoadingStudentsForModal(false);
       }
@@ -341,10 +359,10 @@ export default function DashboardPage() {
             } else {
                 setMyAttendanceForSelectedSlot('not_recorded');
             }
-        } catch (err) {
+        } catch (err: any) {
             console.error("Error fetching student's attendance record:", err);
-            toast({variant: "destructive", title: "Attendance Error", description: "Could not load your attendance status."});
-            setMyAttendanceForSelectedSlot('not_recorded'); // or some error state
+            toast({variant: "destructive", title: "Attendance Error", description: `Could not load your attendance status: ${err.message}`});
+            setMyAttendanceForSelectedSlot('not_recorded'); 
         }
     }
     setShowClassDetailsModal(true);
@@ -405,9 +423,9 @@ export default function DashboardPage() {
         await Promise.all(batchPromises);
         toast({title: "Success", description: "Attendance saved successfully."});
         setShowClassDetailsModal(false);
-    } catch (err) {
+    } catch (err: any) {
         console.error("Error saving attendance:", err);
-        toast({variant: "destructive", title: "Save Error", description: "Could not save attendance."});
+        toast({variant: "destructive", title: "Save Error", description: `Could not save attendance: ${err.message}`});
     } finally {
         setIsSavingAttendance(false);
     }
@@ -547,7 +565,7 @@ export default function DashboardPage() {
               
               {userData?.role === 'Teacher' && (
                 isLoadingStudentsForModal ? <div className="flex justify-center items-center py-8"><Loader2 className="h-8 w-8 animate-spin"/></div> :
-                studentsForModal.length === 0 ? <p className="text-muted-foreground text-center py-4">No students found in this group.</p> :
+                studentsForModal.length === 0 ? <p className="text-muted-foreground text-center py-4">No students found in this group or unable to load student data.</p> :
                 <ScrollArea className="flex-grow pr-4 -mr-4">
                   <div className="space-y-4 py-4">
                   {studentsForModal.map((student) => {
@@ -633,3 +651,4 @@ export default function DashboardPage() {
     </div>
   );
 }
+

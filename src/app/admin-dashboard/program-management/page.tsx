@@ -7,13 +7,21 @@ import { db } from '@/lib/firebase';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Loader2, BookOpenText, ChevronRight } from 'lucide-react';
+import { Loader2, BookOpenText } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 
 interface Department { id: string; name: string; }
 interface Year { id: string; name: string; }
 interface Speciality { id: string; name: string; }
 interface Group { id: string; name: string; departmentId: string, yearId: string, specialityId: string }
+
+const DAYS_OF_WEEK = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"];
+const TIME_SLOTS = [
+  "08:30 - 10:00",
+  "10:00 - 11:30",
+  "12:30 - 14:00",
+  "14:00 - 15:30",
+];
 
 export default function ProgramManagementPage() {
   const { toast } = useToast();
@@ -231,10 +239,6 @@ export default function ProgramManagementPage() {
               <p className="text-sm text-muted-foreground">
                 Path: {getPath()}
               </p>
-              <p className="mt-3 text-foreground">
-                The program management interface for <span className="font-medium">{selectedGroupDetails.name}</span> will appear here.
-              </p>
-              {/* Placeholder for actual program scheduling UI */}
             </div>
           )}
            {!selectedGroupId && selectedSpecialityId && !isLoadingGroups && groups.length === 0 && (
@@ -246,7 +250,46 @@ export default function ProgramManagementPage() {
         </CardContent>
       </Card>
 
-      {/* Future: Program schedule UI will go here, likely in a new Card */}
+      {selectedGroupDetails && (
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle>Weekly Program for <span className="text-primary">{selectedGroupDetails.name}</span></CardTitle>
+            <CardDescription>
+              Setup the recurring weekly schedule. Click on a slot to add or edit a class.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-[auto_repeat(5,minmax(0,1fr))] gap-1 border rounded-lg p-1 bg-muted/20">
+              {/* Header Row for Days */}
+              <div className="p-2 text-xs font-medium text-muted-foreground rounded-md"></div> {/* Empty corner for time labels column header */}
+              {DAYS_OF_WEEK.map((day) => (
+                <div key={day} className="font-semibold p-2 border rounded-md text-center bg-muted text-sm">
+                  {day}
+                </div>
+              ))}
+
+              {/* Grid Rows for Time Slots */}
+              {TIME_SLOTS.map((timeSlot) => (
+                <React.Fragment key={timeSlot}>
+                  <div className="font-semibold p-2 border rounded-md text-center bg-muted text-sm flex items-center justify-center">
+                    {timeSlot}
+                  </div>
+                  {DAYS_OF_WEEK.map((day) => (
+                    <div
+                      key={`${day}-${timeSlot}`}
+                      className="p-3 border rounded-md min-h-[100px] bg-background hover:bg-accent/50 transition-colors cursor-pointer flex flex-col items-center justify-center text-xs text-muted-foreground"
+                      // onClick={() => handleSlotClick(day, timeSlot)} // This will be added later
+                    >
+                      {/* Content for each slot will go here */}
+                    </div>
+                  ))}
+                </React.Fragment>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
+

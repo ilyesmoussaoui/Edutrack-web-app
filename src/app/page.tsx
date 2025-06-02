@@ -22,7 +22,7 @@ export default function LandingPage() {
                 Login
               </Button>
             </Link>
-            <Link href="/signup" passHref legacyBehavior>
+            <Link href="/login" passHref legacyBehavior>
               <Button variant="outline" className="w-full" size="lg">
                 Sign Up
               </Button>

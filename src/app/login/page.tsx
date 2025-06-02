@@ -5,7 +5,7 @@ import type { FormEvent } from 'react';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
-import { doc, setDoc } from 'firebase/firestore';
+import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase';
 import { AppHeader } from '@/components/layout/app-header';
 import { Button } from '@/components/ui/button';
@@ -39,13 +39,30 @@ export default function CombinedAuthPage() {
     setLoginLoading(true);
     setLoginError(null);
     try {
-      // Placeholder for actual login:
-      // await signInWithEmailAndPassword(auth, loginEmail, loginPassword);
-      // For now, just navigate to dashboard
-      console.log("Login attempt with:", loginEmail);
-      router.push('/dashboard');
+      const userCredential = await signInWithEmailAndPassword(auth, loginEmail, loginPassword);
+      const user = userCredential.user;
+
+      // Fetch user role from Firestore
+      const userDocRef = doc(db, "users", user.uid);
+      const userDoc = await getDoc(userDocRef);
+
+      if (userDoc.exists()) {
+        // const userData = userDoc.data();
+        // const userRole = userData.role;
+        // console.log("User role:", userRole); // For debugging, can be removed
+        router.push('/dashboard');
+      } else {
+        // This case should ideally not happen if sign-up always creates a user doc
+        setLoginError("User data not found. Please contact support.");
+        await auth.signOut(); // Sign out the user as their data is incomplete
+      }
     } catch (err: any) {
-      setLoginError(err.message || 'Failed to login.');
+      if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
+        setLoginError('Invalid email or password.');
+      } else {
+        setLoginError(err.message || 'Failed to login. Please try again.');
+      }
+      console.error("Login error:", err);
     } finally {
       setLoginLoading(false);
     }
@@ -64,7 +81,6 @@ export default function CombinedAuthPage() {
       const userCredential = await createUserWithEmailAndPassword(auth, signUpEmail, signUpPassword);
       const user = userCredential.user;
 
-      // Create user document in Firestore
       await setDoc(doc(db, "users", user.uid), {
         uid: user.uid,
         fullName: signUpFullName,

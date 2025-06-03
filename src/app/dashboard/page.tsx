@@ -11,7 +11,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogClose, DialogFooter } from "@/components/ui/dialog";
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Loader2, AlertTriangle, LogOut, CalendarDays, ChevronLeft, ChevronRight, Info } from 'lucide-react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Loader2, AlertTriangle, LogOut, CalendarDays, ChevronLeft, ChevronRight, Info, ClipboardEdit } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
@@ -153,7 +154,7 @@ export default function DashboardPage() {
           if (userDocSnap.exists()) {
             const fetchedUserData = { uid: user.uid, ...userDocSnap.data() } as UserData;
             setUserData(fetchedUserData);
-            console.log("User Data Fetched:", fetchedUserData); 
+            console.log("User Data Fetched:", fetchedUserData); // For debugging user role
             
             if (fetchedUserData.role === 'Student' && !fetchedUserData.assignedGroupId) {
               setDisplayMessage('Please wait until the Admin assigns you to a group/program.');
@@ -283,7 +284,7 @@ export default function DashboardPage() {
     });
   };
   
-  const handleSlotClick = async (slotData: ScheduleSlotFetched, dayOfWeek: string) => {
+ const handleSlotClick = async (slotData: ScheduleSlotFetched, dayOfWeek: string) => {
     setSelectedClassSlotDetails(slotData);
     const actualDate = getDateForDayInWeek(currentDisplayDate, dayOfWeek);
     setSelectedClassActualDate(actualDate);
@@ -311,12 +312,11 @@ export default function DashboardPage() {
         setStudentsForModal(fetchedStudents);
 
         const newAttendanceStates = new Map<string, StudentAttendanceUIState>();
-        if (fetchedStudents.length > 0) {
-            // Query only for attendance records matching classInstanceId AND the current teacher's UID
+        if (fetchedStudents.length > 0 && currentUser.uid) {
             const attendanceRecordsQuery = query(
                 collection(db, 'attendances'), 
                 where('classInstanceId', '==', classInstanceIdGenerated),
-                where('teacherId', '==', currentUser.uid) // Ensures teacher only queries their own records for this instance
+                where('teacherId', '==', currentUser.uid)
             );
             const attendanceRecordsSnap = await getDocs(attendanceRecordsQuery);
             const existingRecordsMap = new Map<string, AttendanceRecord>();
@@ -356,7 +356,6 @@ export default function DashboardPage() {
     } else if (userData?.role === 'Student' && currentUser) {
         setMyAttendanceForSelectedSlot('loading');
         try {
-            // Student's attendance record ID should still be based on classInstanceId and their own UID
             const attendanceDocId = `${classInstanceIdGenerated}_${currentUser.uid}`;
             const attendanceDocRef = doc(db, "attendances", attendanceDocId);
             const docSnap = await getDoc(attendanceDocRef);
@@ -413,7 +412,7 @@ export default function DashboardPage() {
                 studentId: studentState.studentId,
                 classInstanceId: currentClassInstanceId,
                 groupId: selectedClassSlotDetails.groupId,
-                teacherId: currentUser.uid, // Logged-in teacher's UID
+                teacherId: currentUser.uid, 
                 moduleName: selectedClassSlotDetails.moduleName,
                 date: Timestamp.fromDate(selectedClassActualDate),
                 timeSlot: selectedClassSlotDetails.time,
@@ -478,81 +477,204 @@ export default function DashboardPage() {
           </Card>
         )}
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center">
-              <CalendarDays className="mr-2 h-6 w-6 text-primary" />
-              {displayMessage ? "Important Message" : "Your Weekly Schedule"}
-            </CardTitle>
-            {userData && <CardDescription>Role: {userData.role}</CardDescription>}
-          </CardHeader>
-          <CardContent>
-            {displayMessage ? (
-              <p className="text-lg text-center py-8 px-4 bg-secondary/30 rounded-md">{displayMessage}</p>
-            ) : (userData?.role === 'Teacher' || (userData?.role === 'Student' && userData.assignedGroupId)) ? (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <Button variant="outline" size="sm" onClick={handlePreviousWeek} disabled={isSavingAttendance}> 
-                    <ChevronLeft className="h-4 w-4 mr-1" /> Previous Week
-                  </Button>
-                  <p className="text-sm font-medium text-muted-foreground">{currentWeekIdentifier}</p>
-                  <Button variant="outline" size="sm" onClick={handleNextWeek} disabled={isSavingAttendance}> 
-                    Next Week <ChevronRight className="h-4 w-4 ml-1" />
-                  </Button>
-                </div>
-                <div className="grid grid-cols-[auto_repeat(5,minmax(0,1fr))] gap-px border rounded-lg p-px bg-border overflow-hidden">
-                  <div className="p-2 text-xs font-medium text-muted-foreground bg-muted"></div> 
-                  {DAYS_OF_WEEK.map((day) => (
-                    <div key={day} className="font-semibold p-2 border-b border-r border-border text-center bg-muted text-sm text-foreground">
-                      {day}
-                    </div>
-                  ))}
-                  {TIME_SLOTS.map((timeSlot) => (
-                    <React.Fragment key={timeSlot}>
-                      <div className="font-semibold p-2 border-r border-border text-center bg-muted text-sm flex items-center justify-center text-foreground">
-                        {timeSlot.replace(' - ', '\n-\n')}
+        {userData?.role === 'Teacher' && (
+          displayMessage ? (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center">
+                  <Info className="mr-2 h-6 w-6 text-primary" />
+                  Important Message
+                </CardTitle>
+                 {userData && <CardDescription>Role: {userData.role}</CardDescription>}
+              </CardHeader>
+              <CardContent>
+                <p className="text-lg text-center py-8 px-4 bg-secondary/30 rounded-md">{displayMessage}</p>
+              </CardContent>
+            </Card>
+          ) : (
+            <Tabs defaultValue="schedule" className="w-full space-y-4">
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="schedule">Weekly Schedule</TabsTrigger>
+                <TabsTrigger value="grades">Grades Management</TabsTrigger>
+              </TabsList>
+              <TabsContent value="schedule">
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <Button variant="outline" size="sm" onClick={handlePreviousWeek} disabled={isSavingAttendance}> 
+                      <ChevronLeft className="h-4 w-4 mr-1" /> Previous Week
+                    </Button>
+                    <p className="text-sm font-medium text-muted-foreground">{currentWeekIdentifier}</p>
+                    <Button variant="outline" size="sm" onClick={handleNextWeek} disabled={isSavingAttendance}> 
+                      Next Week <ChevronRight className="h-4 w-4 ml-1" />
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-[auto_repeat(5,minmax(0,1fr))] gap-px border rounded-lg p-px bg-border overflow-hidden">
+                    <div className="p-2 text-xs font-medium text-muted-foreground bg-muted"></div> 
+                    {DAYS_OF_WEEK.map((day) => (
+                      <div key={day} className="font-semibold p-2 border-b border-r border-border text-center bg-muted text-sm text-foreground">
+                        {day}
                       </div>
-                      {DAYS_OF_WEEK.map((day) => {
-                        const slotKey = createSlotKey(day, timeSlot);
-                        const scheduledClass = currentScheduleMap.get(slotKey);
-                        return (
-                          <div
-                            key={`${day}-${timeSlot}`}
-                            className={cn(
-                              "border-r border-b border-border min-h-[100px] bg-background p-1.5 text-xs leading-tight",
-                              scheduledClass && "cursor-pointer hover:bg-accent/50 transition-colors",
-                              day === DAYS_OF_WEEK[DAYS_OF_WEEK.length -1] && "border-r-0",
-                              timeSlot === TIME_SLOTS[TIME_SLOTS.length -1] && "border-b-0"
-                            )}
-                            onClick={scheduledClass ? () => handleSlotClick(scheduledClass, day) : undefined}
-                          >
-                            {scheduledClass ? (
-                              <div className="flex flex-col h-full">
-                                <p className="font-semibold text-primary truncate">{scheduledClass.moduleName}</p>
-                                {userData.role === 'Teacher' && <p className="text-muted-foreground truncate">Group: {scheduledClass.groupName}</p>}
-                                {userData.role === 'Student' && <p className="text-muted-foreground truncate">Teacher: {scheduledClass.teacherName}</p>}
-                                <p className="text-muted-foreground truncate mt-auto pt-1">@{scheduledClass.roomHall}</p>
-                              </div>
-                            ) : (
-                              <div className="h-full flex items-center justify-center text-muted-foreground/30">
-                                <Info className="h-4 w-4"/>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </React.Fragment>
-                  ))}
+                    ))}
+                    {TIME_SLOTS.map((timeSlot) => (
+                      <React.Fragment key={timeSlot}>
+                        <div className="font-semibold p-2 border-r border-border text-center bg-muted text-sm flex items-center justify-center text-foreground">
+                          {timeSlot.replace(' - ', '\n-\n')}
+                        </div>
+                        {DAYS_OF_WEEK.map((day) => {
+                          const slotKey = createSlotKey(day, timeSlot);
+                          const scheduledClass = currentScheduleMap.get(slotKey);
+                          return (
+                            <div
+                              key={`${day}-${timeSlot}`}
+                              className={cn(
+                                "border-r border-b border-border min-h-[100px] bg-background p-1.5 text-xs leading-tight",
+                                scheduledClass && "cursor-pointer hover:bg-accent/50 transition-colors",
+                                day === DAYS_OF_WEEK[DAYS_OF_WEEK.length -1] && "border-r-0",
+                                timeSlot === TIME_SLOTS[TIME_SLOTS.length -1] && "border-b-0"
+                              )}
+                              onClick={scheduledClass ? () => handleSlotClick(scheduledClass, day) : undefined}
+                            >
+                              {scheduledClass ? (
+                                <div className="flex flex-col h-full">
+                                  <p className="font-semibold text-primary truncate">{scheduledClass.moduleName}</p>
+                                  <p className="text-muted-foreground truncate">Group: {scheduledClass.groupName}</p>
+                                  <p className="text-muted-foreground truncate mt-auto pt-1">@{scheduledClass.roomHall}</p>
+                                </div>
+                              ) : (
+                                <div className="h-full flex items-center justify-center text-muted-foreground/30">
+                                  <Info className="h-4 w-4"/>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </React.Fragment>
+                    ))}
+                  </div>
+                  {currentScheduleMap.size === 0 && !isLoadingTeacherSchedule && !isLoadingStudentSchedule && (
+                      <p className="text-center text-muted-foreground py-4">You have no classes in your recurring schedule for this week.</p>
+                  )}
                 </div>
-                {currentScheduleMap.size === 0 && !isLoadingTeacherSchedule && !isLoadingStudentSchedule && !displayMessage && (
-                    <p className="text-center text-muted-foreground py-4">You have no classes in your recurring schedule for this week.</p>
-                )}
-              </div>
-            ) : (
-                 <p className="text-center text-muted-foreground py-4">Loading schedule or role not applicable for this view.</p>
-            )}
-          </CardContent>
-        </Card>
+              </TabsContent>
+              <TabsContent value="grades">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center">
+                        <ClipboardEdit className="mr-2 h-5 w-5 text-primary" />Grades Management
+                    </CardTitle>
+                    <CardDescription>View and manage student grades for your classes.</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-muted-foreground mb-4">
+                      This section will allow you to input, view, and update student grades. 
+                      Full functionality is currently under development.
+                    </p>
+                    <Button disabled className="mt-2">
+                      <ClipboardEdit className="mr-2 h-4 w-4" />
+                      Access Full Grades System (Coming Soon)
+                    </Button>
+                  </CardContent>
+                </Card>
+              </TabsContent>
+            </Tabs>
+          )
+        )}
+
+        {userData?.role === 'Student' && userData.assignedGroupId && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center">
+                <CalendarDays className="mr-2 h-6 w-6 text-primary" />
+                {displayMessage ? "Important Message" : "Your Weekly Schedule"}
+              </CardTitle>
+              {userData && <CardDescription>Role: {userData.role}</CardDescription>}
+            </CardHeader>
+            <CardContent>
+               {displayMessage ? (
+                <p className="text-lg text-center py-8 px-4 bg-secondary/30 rounded-md">{displayMessage}</p>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <Button variant="outline" size="sm" onClick={handlePreviousWeek} disabled={isSavingAttendance}> 
+                      <ChevronLeft className="h-4 w-4 mr-1" /> Previous Week
+                    </Button>
+                    <p className="text-sm font-medium text-muted-foreground">{currentWeekIdentifier}</p>
+                    <Button variant="outline" size="sm" onClick={handleNextWeek} disabled={isSavingAttendance}> 
+                      Next Week <ChevronRight className="h-4 w-4 ml-1" />
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-[auto_repeat(5,minmax(0,1fr))] gap-px border rounded-lg p-px bg-border overflow-hidden">
+                    <div className="p-2 text-xs font-medium text-muted-foreground bg-muted"></div> 
+                    {DAYS_OF_WEEK.map((day) => (
+                      <div key={day} className="font-semibold p-2 border-b border-r border-border text-center bg-muted text-sm text-foreground">
+                        {day}
+                      </div>
+                    ))}
+                    {TIME_SLOTS.map((timeSlot) => (
+                      <React.Fragment key={timeSlot}>
+                        <div className="font-semibold p-2 border-r border-border text-center bg-muted text-sm flex items-center justify-center text-foreground">
+                          {timeSlot.replace(' - ', '\n-\n')}
+                        </div>
+                        {DAYS_OF_WEEK.map((day) => {
+                          const slotKey = createSlotKey(day, timeSlot);
+                          const scheduledClass = currentScheduleMap.get(slotKey);
+                          return (
+                            <div
+                              key={`${day}-${timeSlot}`}
+                              className={cn(
+                                "border-r border-b border-border min-h-[100px] bg-background p-1.5 text-xs leading-tight",
+                                scheduledClass && "cursor-pointer hover:bg-accent/50 transition-colors",
+                                day === DAYS_OF_WEEK[DAYS_OF_WEEK.length -1] && "border-r-0",
+                                timeSlot === TIME_SLOTS[TIME_SLOTS.length -1] && "border-b-0"
+                              )}
+                              onClick={scheduledClass ? () => handleSlotClick(scheduledClass, day) : undefined}
+                            >
+                              {scheduledClass ? (
+                                <div className="flex flex-col h-full">
+                                  <p className="font-semibold text-primary truncate">{scheduledClass.moduleName}</p>
+                                  <p className="text-muted-foreground truncate">Teacher: {scheduledClass.teacherName}</p>
+                                  <p className="text-muted-foreground truncate mt-auto pt-1">@{scheduledClass.roomHall}</p>
+                                </div>
+                              ) : (
+                                <div className="h-full flex items-center justify-center text-muted-foreground/30">
+                                  <Info className="h-4 w-4"/>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </React.Fragment>
+                    ))}
+                  </div>
+                  {currentScheduleMap.size === 0 && !isLoadingStudentSchedule && (
+                      <p className="text-center text-muted-foreground py-4">You have no classes in your recurring schedule for this week.</p>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+        
+        {/* Fallback for users not fitting teacher/student with group, and no specific displayMessage */}
+        {!isLoadingUser && !error && !displayMessage && 
+         !(userData?.role === 'Teacher') && 
+         !(userData?.role === 'Student' && userData?.assignedGroupId) && (
+            <Card>
+                <CardHeader>
+                    <CardTitle className="flex items-center">
+                        <Info className="mr-2 h-6 w-6 text-primary" />
+                        Dashboard Information
+                    </CardTitle>
+                    {userData && <CardDescription>Role: {userData.role}</CardDescription>}
+                </CardHeader>
+                <CardContent>
+                    <p className="text-center text-muted-foreground py-4">
+                        {isLoadingUser ? "Loading..." : "Dashboard content is not applicable for your current role or status."}
+                    </p>
+                </CardContent>
+            </Card>
+        )}
+
 
         {selectedClassSlotDetails && (
           <Dialog open={showClassDetailsModal} onOpenChange={setShowClassDetailsModal}>

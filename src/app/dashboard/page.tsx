@@ -106,11 +106,11 @@ interface GradeDocument {
   groupId: string;
   moduleName: string; // Uppercase
   teacherId: string;
-  attendanceParticipation: number;
-  quiz: number;
-  TD: number;
-  test: number;
-  moduleTotal: number;
+  attendanceParticipation?: number; // Optional for historical data
+  quiz?: number; // Optional for historical data
+  TD?: number; // Optional for historical data
+  test?: number; // Optional for historical data
+  moduleTotal?: number; // Optional for historical data
   createdAt?: any; 
   updatedAt: any; 
 }
@@ -119,7 +119,7 @@ interface StudentModuleGradeInfo {
   moduleName: string;
   teacherName: string;
   teacherId: string;
-  grade?: GradeDocument;
+  grade?: GradeDocument; // GradeDocument will now have potentially calculated moduleTotal
   isLoadingGrade: boolean; 
 }
 
@@ -501,7 +501,7 @@ export default function DashboardPage() {
           if (existingGrade) {
             const testScoreNum = existingGrade.data.test ?? 0;
             const tdScoreNum = existingGrade.data.TD ?? 0;
-            const moduleTotalNum = existingGrade.data.moduleTotal ?? parseFloat(((testScoreNum * 0.6) + (tdScoreNum * 0.4)).toFixed(2))
+            const moduleTotalNum = existingGrade.data.moduleTotal ?? parseFloat(((testScoreNum * 0.6) + (tdScoreNum * 0.4)).toFixed(2));
             return {
               ...student,
               attendanceParticipationScore: String(existingGrade.data.attendanceParticipation ?? ''),
@@ -559,11 +559,29 @@ export default function DashboardPage() {
                     where("teacherId", "==", moduleInfo.teacherId)
                 );
                 const gradeSnap = await getDocs(gradeQuery);
-                let gradeData: GradeDocument | undefined = undefined;
+                
+                let processedGradeData: GradeDocument | undefined = undefined;
                 if (!gradeSnap.empty) {
-                    gradeData = gradeSnap.docs[0].data() as GradeDocument;
+                    const rawGrade = gradeSnap.docs[0].data() as GradeDocument;
+                    let calculatedModuleTotal: number | undefined = undefined;
+
+                    if (typeof rawGrade.moduleTotal === 'number') {
+                        calculatedModuleTotal = rawGrade.moduleTotal;
+                    } else {
+                        const testScoreIsNum = typeof rawGrade.test === 'number';
+                        const tdScoreIsNum = typeof rawGrade.TD === 'number';
+                        if (testScoreIsNum || tdScoreIsNum) { 
+                            const testVal = rawGrade.test ?? 0;
+                            const tdVal = rawGrade.TD ?? 0;
+                            calculatedModuleTotal = parseFloat(((testVal * 0.6) + (tdVal * 0.4)).toFixed(2));
+                        }
+                    }
+                    processedGradeData = {
+                        ...rawGrade,
+                        moduleTotal: calculatedModuleTotal,
+                    };
                 }
-                return { ...moduleInfo, grade: gradeData, isLoadingGrade: false };
+                return { ...moduleInfo, grade: processedGradeData, isLoadingGrade: false };
             });
 
             try {
@@ -824,7 +842,7 @@ export default function DashboardPage() {
         const quiz = parseFloat(student.quizScore) || 0;
         const test = parseFloat(student.testScore) || 0;
         
-        const gradeData: Omit<GradeDocument, 'createdAt'> & { createdAt?: any, updatedAt: any } = {
+        const gradeData: Omit<GradeDocument, 'createdAt' | 'moduleTotal'> & { createdAt?: any, updatedAt: any, moduleTotal: number } = {
           studentId: student.studentId,
           groupId: selectedGroupForGrading.id,
           moduleName: selectedModuleForGrading.toUpperCase(),
@@ -833,7 +851,7 @@ export default function DashboardPage() {
           quiz: quiz,
           TD: student.tdScore,
           test: test,
-          moduleTotal: student.moduleTotal,
+          moduleTotal: student.moduleTotal, // Ensure moduleTotal is included
           updatedAt: serverTimestamp(),
         };
 

@@ -19,20 +19,19 @@ interface Year { id: string; name: string; }
 interface Speciality { id: string; name: string; }
 interface Group { id: string; name: string; }
 
-interface GradeDocument { // Mirrors the structure in Firestore
+interface GradeDocument { 
   studentId: string;
   groupId: string;
-  moduleName: string; // Uppercase
+  moduleName: string; 
   teacherId: string;
-  attendanceParticipation: number;
-  quiz: number;
-  TD: number;
-  test: number;
-  moduleTotal: number;
-  // createdAt, updatedAt are also present but not strictly needed for display here
+  attendanceParticipation?: number;
+  quiz?: number;
+  TD?: number;
+  test?: number;
+  moduleTotal?: number;
 }
 
-interface StudentUser { // For student basic info
+interface StudentUser { 
   uid: string;
   fullName: string;
 }
@@ -228,7 +227,6 @@ export default function GradesViewerPage() {
     setError(null);
     const fetchStudentGradesData = async () => {
       try {
-        // Fetch students in the selected group
         const studentsQuery = query(
           collection(db, "users"),
           where("assignedGroupId", "==", selectedGroupId),
@@ -247,7 +245,6 @@ export default function GradesViewerPage() {
           return;
         }
 
-        // Fetch grades for these students for the selected module
         const gradesQuery = query(
           collection(db, "grades"),
           where("groupId", "==", selectedGroupId),
@@ -260,16 +257,32 @@ export default function GradesViewerPage() {
         });
 
         const combinedData: AdminStudentGradeView[] = studentsInGroup.map(student => {
-          const grade = gradesMap.get(student.uid);
+          const gradeRecord = gradesMap.get(student.uid);
+          let mt: number | undefined = undefined;
+
+          if (gradeRecord) {
+            if (typeof gradeRecord.moduleTotal === 'number') {
+                mt = gradeRecord.moduleTotal;
+            } else {
+                const testScoreIsNum = typeof gradeRecord.test === 'number';
+                const tdScoreIsNum = typeof gradeRecord.TD === 'number';
+                if (testScoreIsNum || tdScoreIsNum) { 
+                    const testVal = gradeRecord.test ?? 0;
+                    const tdVal = gradeRecord.TD ?? 0;
+                    mt = parseFloat(((testVal * 0.6) + (tdVal * 0.4)).toFixed(2));
+                }
+            }
+          }
+
           return {
             studentId: student.uid,
             studentFullName: student.fullName,
-            attendanceParticipation: grade?.attendanceParticipation,
-            quiz: grade?.quiz,
-            tdScore: grade?.TD,
-            testScore: grade?.test,
-            moduleTotal: grade?.moduleTotal,
-            hasGradeRecord: !!grade,
+            attendanceParticipation: gradeRecord?.attendanceParticipation,
+            quiz: gradeRecord?.quiz,
+            tdScore: gradeRecord?.TD,
+            testScore: gradeRecord?.test,
+            moduleTotal: mt,
+            hasGradeRecord: !!gradeRecord,
           };
         });
         setStudentGradesForView(combinedData);
@@ -433,3 +446,4 @@ export default function GradesViewerPage() {
     </div>
   );
 }
+

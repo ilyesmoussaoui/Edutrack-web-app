@@ -8,11 +8,11 @@ import { doc, getDoc, collectionGroup, query, where, onSnapshot, collection, ser
 import { auth, db } from '@/lib/firebase'; 
 import { AppHeader } from '@/components/layout/app-header';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogClose, DialogFooter } from "@/components/ui/dialog";
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, AlertTriangle, LogOut, CalendarDays, ChevronLeft, ChevronRight, Info, ClipboardEdit } from 'lucide-react';
+import { Loader2, AlertTriangle, LogOut, CalendarDays, ChevronLeft, ChevronRight, Info, ClipboardEdit, ListChecks, CheckSquare } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
@@ -46,6 +46,25 @@ interface ScheduleSlotFetched {
   groupId: string;
   groupName: string;
 }
+
+interface ScheduleSlotFetchedWithParentIds extends ScheduleSlotFetched {
+  departmentId: string;
+  yearId: string;
+  specialityId: string;
+}
+
+interface ManagedGroupInfo {
+  id: string; // groupId
+  name: string; // groupName
+  path: string; 
+  departmentId: string;
+  yearId: string;
+  specialityId: string;
+  departmentName: string;
+  yearName: string;
+  specialityName: string;
+}
+
 
 interface StudentAttendanceUIState {
   studentId: string;
@@ -111,14 +130,14 @@ export default function DashboardPage() {
   const [isLoadingUser, setIsLoadingUser] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [teacherSchedule, setTeacherSchedule] = useState<Map<string, ScheduleSlotFetched>>(new Map());
+  const [teacherSchedule, setTeacherSchedule] = useState<Map<string, ScheduleSlotFetchedWithParentIds>>(new Map());
   const [isLoadingTeacherSchedule, setIsLoadingTeacherSchedule] = useState(false);
   
-  const [studentSchedule, setStudentSchedule] = useState<Map<string, ScheduleSlotFetched>>(new Map());
+  const [studentSchedule, setStudentSchedule] = useState<Map<string, ScheduleSlotFetchedWithParentIds>>(new Map());
   const [isLoadingStudentSchedule, setIsLoadingStudentSchedule] = useState(false);
 
   const [showClassDetailsModal, setShowClassDetailsModal] = useState(false);
-  const [selectedClassSlotDetails, setSelectedClassSlotDetails] = useState<ScheduleSlotFetched | null>(null);
+  const [selectedClassSlotDetails, setSelectedClassSlotDetails] = useState<ScheduleSlotFetchedWithParentIds | null>(null);
   const [selectedClassActualDate, setSelectedClassActualDate] = useState<Date | null>(null);
 
   const [currentDisplayDate, setCurrentDisplayDate] = useState<Date>(getStartOfWeek(new Date()));
@@ -132,6 +151,11 @@ export default function DashboardPage() {
   
   const [myAttendanceForSelectedSlot, setMyAttendanceForSelectedSlot] = useState<AttendanceRecord | null | 'loading' | 'not_recorded'>('not_recorded');
 
+  // States for Grades Management Tab
+  const [managedGroupsList, setManagedGroupsList] = useState<ManagedGroupInfo[]>([]);
+  const [isLoadingManagedGroups, setIsLoadingManagedGroups] = useState(false);
+  const [selectedGroupForGrading, setSelectedGroupForGrading] = useState<ManagedGroupInfo | null>(null);
+
 
   useEffect(() => {
     setCurrentWeekIdentifier(formatDateRange(currentDisplayDate));
@@ -144,6 +168,8 @@ export default function DashboardPage() {
       setDisplayMessage(null);
       setTeacherSchedule(new Map()); 
       setStudentSchedule(new Map());
+      setManagedGroupsList([]);
+      setSelectedGroupForGrading(null);
 
       if (user) {
         setCurrentUser(user);
@@ -154,7 +180,7 @@ export default function DashboardPage() {
           if (userDocSnap.exists()) {
             const fetchedUserData = { uid: user.uid, ...userDocSnap.data() } as UserData;
             setUserData(fetchedUserData);
-            console.log("User Data Fetched:", fetchedUserData); // For debugging user role
+            console.log("User Data Fetched:", fetchedUserData); 
             
             if (fetchedUserData.role === 'Student' && !fetchedUserData.assignedGroupId) {
               setDisplayMessage('Please wait until the Admin assigns you to a group/program.');
@@ -189,13 +215,26 @@ export default function DashboardPage() {
       );
 
       const unsubscribeSchedule = onSnapshot(scheduleQuery, (snapshot) => {
-        const newSchedule = new Map<string, ScheduleSlotFetched>();
+        const newSchedule = new Map<string, ScheduleSlotFetchedWithParentIds>();
         let hasAssignments = false;
-        snapshot.forEach((docSnap) => {
-          const slotData = { id: docSnap.id, ...docSnap.data() } as ScheduleSlotFetched;
-          const slotKey = createSlotKey(slotData.day, slotData.time);
-          newSchedule.set(slotKey, slotData);
-          hasAssignments = true;
+        snapshot.docs.forEach((docSnap) => {
+          const pathSegments = docSnap.ref.path.split('/');
+          // departments/{deptId}/years/{yearId}/specialities/{specId}/groups/{groupId}/schedule/{scheduleDocId}
+          // indices:      0        1      2      3        4         5       6        7       8            9
+          if (pathSegments.length >= 8) { // Basic validation
+            const slotData = { 
+              id: docSnap.id, 
+              ...docSnap.data(),
+              departmentId: pathSegments[1],
+              yearId: pathSegments[3],
+              specialityId: pathSegments[5],
+              // groupId is already in docSnap.data(), but ensuring it's from path if needed
+              groupId: pathSegments[7] 
+            } as ScheduleSlotFetchedWithParentIds;
+            const slotKey = createSlotKey(slotData.day, slotData.time);
+            newSchedule.set(slotKey, slotData);
+            hasAssignments = true;
+          }
         });
         setTeacherSchedule(newSchedule);
         
@@ -217,6 +256,7 @@ export default function DashboardPage() {
     }
   }, [userData, currentUser, displayMessage, isLoadingUser, error]);
 
+
   useEffect(() => {
     if (userData?.role === 'Student' && userData.assignedGroupId && currentUser && !displayMessage) {
       setIsLoadingStudentSchedule(true);
@@ -228,13 +268,23 @@ export default function DashboardPage() {
       );
       
       const unsubscribeSchedule = onSnapshot(scheduleQuery, (snapshot) => {
-        const newSchedule = new Map<string, ScheduleSlotFetched>();
+        const newSchedule = new Map<string, ScheduleSlotFetchedWithParentIds>();
         let groupHasSchedule = false;
-        snapshot.forEach((docSnap) => {
-          const slotData = { id: docSnap.id, ...docSnap.data() } as ScheduleSlotFetched;
-          const slotKey = createSlotKey(slotData.day, slotData.time);
-          newSchedule.set(slotKey, slotData);
-          groupHasSchedule = true;
+        snapshot.docs.forEach((docSnap) => {
+          const pathSegments = docSnap.ref.path.split('/');
+          if (pathSegments.length >= 8) {
+            const slotData = { 
+              id: docSnap.id, 
+              ...docSnap.data(),
+              departmentId: pathSegments[1],
+              yearId: pathSegments[3],
+              specialityId: pathSegments[5],
+              groupId: pathSegments[7]
+            } as ScheduleSlotFetchedWithParentIds;
+            const slotKey = createSlotKey(slotData.day, slotData.time);
+            newSchedule.set(slotKey, slotData);
+            groupHasSchedule = true;
+          }
         });
         setStudentSchedule(newSchedule);
 
@@ -255,6 +305,77 @@ export default function DashboardPage() {
       setStudentSchedule(new Map());
     }
   }, [userData, currentUser, displayMessage, isLoadingUser, error]);
+
+  // Effect to populate managedGroupsList for Grades Management tab
+  useEffect(() => {
+    if (userData?.role !== 'Teacher' || teacherSchedule.size === 0) {
+      setManagedGroupsList([]);
+      setSelectedGroupForGrading(null);
+      return;
+    }
+
+    const processGroups = async () => {
+      setIsLoadingManagedGroups(true);
+      const uniqueGroupsMap = new Map<string, Omit<ManagedGroupInfo, 'path' | 'departmentName' | 'yearName' | 'specialityName'>>();
+
+      teacherSchedule.forEach(slot => {
+        if (!uniqueGroupsMap.has(slot.groupId) && slot.departmentId && slot.yearId && slot.specialityId) {
+          uniqueGroupsMap.set(slot.groupId, {
+            id: slot.groupId,
+            name: slot.groupName,
+            departmentId: slot.departmentId,
+            yearId: slot.yearId,
+            specialityId: slot.specialityId,
+          });
+        }
+      });
+
+      const groupsWithPaths: ManagedGroupInfo[] = [];
+      for (const groupCandidate of uniqueGroupsMap.values()) {
+        try {
+          const deptDocRef = doc(db, "departments", groupCandidate.departmentId);
+          const yearDocRef = doc(db, "departments", groupCandidate.departmentId, "years", groupCandidate.yearId);
+          const specDocRef = doc(db, "departments", groupCandidate.departmentId, "years", groupCandidate.yearId, "specialities", groupCandidate.specialityId);
+
+          const [deptSnap, yearSnap, specSnap] = await Promise.all([
+            getDoc(deptDocRef),
+            getDoc(yearDocRef),
+            getDoc(specDocRef)
+          ]);
+
+          const deptName = deptSnap.exists() ? deptSnap.data().name : "Unknown Department";
+          const yearName = yearSnap.exists() ? yearSnap.data().name : "Unknown Year";
+          const specName = specSnap.exists() ? specSnap.data().name : "Unknown Speciality";
+          
+          const path = `Dept: ${deptName}, Year: ${yearName}, Spec: ${specName}, Group: ${groupCandidate.name}`;
+          
+          groupsWithPaths.push({
+            ...groupCandidate,
+            departmentName: deptName,
+            yearName: yearName,
+            specialityName: specName,
+            path,
+          });
+
+        } catch (err) {
+          console.error(`Error fetching path for group ${groupCandidate.id}:`, err);
+          groupsWithPaths.push({ // Add with placeholder path if details fetch fails
+            ...groupCandidate,
+            departmentName: "Error", yearName: "Error", specialityName: "Error",
+            path: `Group: ${groupCandidate.name} (Error fetching full path)`,
+          });
+        }
+      }
+      
+      // Sort by path for consistent ordering
+      groupsWithPaths.sort((a, b) => a.path.localeCompare(b.path));
+      setManagedGroupsList(groupsWithPaths);
+      setIsLoadingManagedGroups(false);
+    };
+
+    processGroups();
+  }, [teacherSchedule, userData?.role]);
+
 
   const handleLogout = async () => {
     setIsLoadingUser(true);
@@ -284,7 +405,7 @@ export default function DashboardPage() {
     });
   };
   
- const handleSlotClick = async (slotData: ScheduleSlotFetched, dayOfWeek: string) => {
+ const handleSlotClick = async (slotData: ScheduleSlotFetchedWithParentIds, dayOfWeek: string) => {
     setSelectedClassSlotDetails(slotData);
     const actualDate = getDateForDayInWeek(currentDisplayDate, dayOfWeek);
     setSelectedClassActualDate(actualDate);
@@ -298,12 +419,11 @@ export default function DashboardPage() {
       setStudentAttendanceStates(new Map());
 
       try {
-        if (!slotData.groupId) {
-          console.error("Error in handleSlotClick (Teacher): slotData.groupId is undefined.", slotData);
-          toast({ variant: "destructive", title: "Data Integrity Error", description: "Class slot is missing group information. Cannot load students." });
+        if (!slotData?.groupId) {
+          console.error("Error in handleSlotClick (Teacher): slotData.groupId is missing.", slotData);
+          toast({ variant: "destructive", title: "Configuration Error", description: "The selected class slot is missing group information. Cannot load students." });
           setIsLoadingStudentsForModal(false);
-          setShowClassDetailsModal(true); 
-          return;
+          return; 
         }
 
         const studentsQuery = query(collection(db, 'users'), where('assignedGroupId', '==', slotData.groupId), where('role', '==', 'Student'), orderBy('fullName'));
@@ -316,7 +436,7 @@ export default function DashboardPage() {
             const attendanceRecordsQuery = query(
                 collection(db, 'attendances'), 
                 where('classInstanceId', '==', classInstanceIdGenerated),
-                where('teacherId', '==', currentUser.uid)
+                where('teacherId', '==', currentUser.uid) 
             );
             const attendanceRecordsSnap = await getDocs(attendanceRecordsQuery);
             const existingRecordsMap = new Map<string, AttendanceRecord>();
@@ -340,10 +460,7 @@ export default function DashboardPage() {
 
       } catch (err: any) {
         console.error("Error fetching students or attendance for modal:", err);
-        let description = "Could not load student data or attendance. Please try again.";
-        if (err.message) {
-            description = `Failed to load data: ${err.message}`;
-        }
+        let description = `Could not load student data or attendance: ${err.message || 'Unknown error'}.`;
         if (err.code === 'permission-denied') {
             description = "Permission denied. Check Firestore rules or ensure necessary indexes exist.";
         } else if (err.message && err.message.toLowerCase().includes('index')) {
@@ -356,7 +473,7 @@ export default function DashboardPage() {
     } else if (userData?.role === 'Student' && currentUser) {
         setMyAttendanceForSelectedSlot('loading');
         try {
-            const attendanceDocId = `${classInstanceIdGenerated}_${currentUser.uid}`;
+            const attendanceDocId = `${classInstanceIdGenerated}_${currentUser.uid}`; // Unique ID for student's attendance record
             const attendanceDocRef = doc(db, "attendances", attendanceDocId);
             const docSnap = await getDoc(attendanceDocRef);
             if (docSnap.exists()) {
@@ -494,7 +611,7 @@ export default function DashboardPage() {
           ) : (
             <Tabs defaultValue="schedule" className="w-full space-y-4">
               <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger value="schedule">Weekly Schedule</TabsTrigger>
+                <TabsTrigger value="schedule">Weekly Schedule & Attendance</TabsTrigger>
                 <TabsTrigger value="grades">Grades Management</TabsTrigger>
               </TabsList>
               <TabsContent value="schedule">
@@ -560,19 +677,54 @@ export default function DashboardPage() {
                 <Card>
                   <CardHeader>
                     <CardTitle className="flex items-center">
-                        <ClipboardEdit className="mr-2 h-5 w-5 text-primary" />Grades Management
+                        <ListChecks className="mr-2 h-5 w-5 text-primary" />Grades Management
                     </CardTitle>
-                    <CardDescription>View and manage student grades for your classes.</CardDescription>
+                    <CardDescription>Select a group to manage grades for its modules.</CardDescription>
                   </CardHeader>
-                  <CardContent>
-                    <p className="text-muted-foreground mb-4">
-                      This section will allow you to input, view, and update student grades. 
-                      Full functionality is currently under development.
-                    </p>
-                    <Button disabled className="mt-2">
-                      <ClipboardEdit className="mr-2 h-4 w-4" />
-                      Access Full Grades System (Coming Soon)
-                    </Button>
+                  <CardContent className="space-y-4">
+                    {isLoadingManagedGroups ? (
+                      <div className="flex items-center justify-center py-6">
+                        <Loader2 className="mr-2 h-6 w-6 animate-spin text-primary" />
+                        <p className="text-muted-foreground">Loading your groups...</p>
+                      </div>
+                    ) : managedGroupsList.length === 0 ? (
+                      <p className="text-muted-foreground text-center py-4">No groups found in your teaching schedule for grade management.</p>
+                    ) : (
+                      <div className="space-y-3">
+                        <h3 className="text-md font-medium text-foreground mb-2">Your Groups:</h3>
+                        <ScrollArea className="h-[300px] pr-3">
+                          {managedGroupsList.map(group => (
+                            <Card 
+                              key={group.id} 
+                              className={cn(
+                                "mb-2 cursor-pointer hover:shadow-md transition-shadow",
+                                selectedGroupForGrading?.id === group.id && "ring-2 ring-primary bg-primary/5"
+                              )}
+                              onClick={() => setSelectedGroupForGrading(group)}
+                            >
+                              <CardContent className="p-3">
+                                <p className="font-semibold text-primary-focus">{group.name}</p>
+                                <p className="text-xs text-muted-foreground">{group.path}</p>
+                              </CardContent>
+                            </Card>
+                          ))}
+                        </ScrollArea>
+                      </div>
+                    )}
+
+                    {selectedGroupForGrading && (
+                      <div className="mt-6 pt-4 border-t">
+                        <h3 className="text-lg font-semibold text-foreground mb-3">
+                          Modules for <span className="text-primary">{selectedGroupForGrading.name}</span>
+                        </h3>
+                        <p className="text-muted-foreground mb-4">
+                          Module selection and grade entry for this group will appear here. This functionality is under development.
+                        </p>
+                        <Button disabled>
+                          <CheckSquare className="mr-2 h-4 w-4"/> Select Module & Enter Grades (Coming Soon)
+                        </Button>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               </TabsContent>
@@ -655,7 +807,6 @@ export default function DashboardPage() {
           </Card>
         )}
         
-        {/* Fallback for users not fitting teacher/student with group, and no specific displayMessage */}
         {!isLoadingUser && !error && !displayMessage && 
          !(userData?.role === 'Teacher') && 
          !(userData?.role === 'Student' && userData?.assignedGroupId) && (

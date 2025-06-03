@@ -201,6 +201,8 @@ export default function DashboardPage() {
   // States for Student "My Grades" Tab
   const [studentModulesWithGrades, setStudentModulesWithGrades] = useState<StudentModuleGradeInfo[]>([]);
   const [isLoadingStudentModuleGrades, setIsLoadingStudentModuleGrades] = useState(false);
+  const [showStudentGradeDetailsModal, setShowStudentGradeDetailsModal] = useState(false);
+  const [selectedModuleForGradeDetails, setSelectedModuleForGradeDetails] = useState<StudentModuleGradeInfo | null>(null);
 
 
   useEffect(() => {
@@ -220,6 +222,7 @@ export default function DashboardPage() {
       setSelectedModuleForGrading(null);
       setStudentsForGrading([]);
       setStudentModulesWithGrades([]);
+      setSelectedModuleForGradeDetails(null);
 
 
       if (user) {
@@ -496,15 +499,15 @@ export default function DashboardPage() {
         const studentsWithPopulatedGrades = studentList.map(student => {
           const existingGrade = existingGradesMap.get(student.studentId);
           if (existingGrade) {
-            const testScore = existingGrade.data.test ?? 0;
-            const tdScore = existingGrade.data.TD ?? 0;
+            const testScoreNum = existingGrade.data.test ?? 0;
+            const tdScoreNum = existingGrade.data.TD ?? 0;
             return {
               ...student,
               attendanceParticipationScore: String(existingGrade.data.attendanceParticipation ?? ''),
               quizScore: String(existingGrade.data.quiz ?? ''),
-              tdScore: tdScore,
-              testScore: String(testScore),
-              moduleTotal: parseFloat(((testScore * 0.6) + (tdScore * 0.4)).toFixed(2)),
+              tdScore: tdScoreNum,
+              testScore: String(testScoreNum),
+              moduleTotal: parseFloat(((testScoreNum * 0.6) + (tdScoreNum * 0.4)).toFixed(2)),
               originalGradeDocId: existingGrade.id,
               isModified: false, 
             };
@@ -865,6 +868,11 @@ export default function DashboardPage() {
   
   const canSaveGrades = !isLoadingStudentsForGrading && !isSavingGrades && studentsForGrading.length > 0 && !studentsForGrading.some(s => s.tdError);
 
+  const handleStudentModuleClick = (moduleInfo: StudentModuleGradeInfo) => {
+    setSelectedModuleForGradeDetails(moduleInfo);
+    setShowStudentGradeDetailsModal(true);
+  };
+
 
   const mainLoading = isLoadingUser || 
                       (userData?.role === 'Teacher' && isLoadingTeacherSchedule && !displayMessage && teacherSchedule.size === 0) || 
@@ -923,7 +931,7 @@ export default function DashboardPage() {
           ) : (
             <Tabs defaultValue="schedule" className="w-full space-y-4">
               <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger value="schedule">Weekly Schedule & Attendance</TabsTrigger>
+                <TabsTrigger value="schedule">Weekly Schedule &amp; Attendance</TabsTrigger>
                 <TabsTrigger value="grades">Grades Management</TabsTrigger>
               </TabsList>
               <TabsContent value="schedule">
@@ -1087,7 +1095,7 @@ export default function DashboardPage() {
                                               </CardTitle>
                                               <div className="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-4">
                                                   <div className="space-y-1">
-                                                      <Label htmlFor={`ap-${student.studentId}`}>Attendance & Participation (Max: 8)</Label>
+                                                      <Label htmlFor={`ap-${student.studentId}`}>Attendance &amp; Participation (Max: 8)</Label>
                                                       <Input 
                                                           type="number" 
                                                           id={`ap-${student.studentId}`} 
@@ -1111,7 +1119,7 @@ export default function DashboardPage() {
                                                       />
                                                   </div>
                                                    <div className="space-y-1">
-                                                      <Label htmlFor={`td-${student.studentId}`}>TD Score (A&P + Quiz, Max: 20)</Label>
+                                                      <Label htmlFor={`td-${student.studentId}`}>TD Score (A&amp;P + Quiz, Max: 20)</Label>
                                                       <Input 
                                                           type="number" 
                                                           id={`td-${student.studentId}`} 
@@ -1146,7 +1154,7 @@ export default function DashboardPage() {
                                                           value={student.moduleTotal.toFixed(2)} 
                                                           readOnly 
                                                           disabled
-                                                          className="bg-muted/50"
+                                                          className="bg-muted/50 font-semibold"
                                                       />
                                                   </div>
                                               </div>
@@ -1270,7 +1278,7 @@ export default function DashboardPage() {
                             <CardTitle className="flex items-center">
                                 <GradeIcon className="mr-2 h-6 w-6 text-primary" /> My Grades
                             </CardTitle>
-                            <CardDescription>View your grades for different modules.</CardDescription>
+                            <CardDescription>View your grades for different modules. Click on a module for details.</CardDescription>
                         </CardHeader>
                         <CardContent>
                             {isLoadingStudentModuleGrades ? (
@@ -1284,7 +1292,11 @@ export default function DashboardPage() {
                                 <ScrollArea className="h-[400px] pr-3">
                                     <div className="space-y-3">
                                         {studentModulesWithGrades.map((moduleGradeInfo, index) => (
-                                            <Card key={`${moduleGradeInfo.moduleName}-${moduleGradeInfo.teacherId}-${index}`} className="p-4">
+                                            <Card 
+                                                key={`${moduleGradeInfo.moduleName}-${moduleGradeInfo.teacherId}-${index}`} 
+                                                className="p-4 cursor-pointer hover:shadow-lg transition-shadow"
+                                                onClick={() => handleStudentModuleClick(moduleGradeInfo)}
+                                            >
                                                 <div className="flex justify-between items-start">
                                                     <div>
                                                         <h4 className="font-semibold text-lg text-primary">{moduleGradeInfo.moduleName}</h4>
@@ -1299,7 +1311,6 @@ export default function DashboardPage() {
                                                         <p className="text-sm text-muted-foreground italic">Grades not yet recorded</p>
                                                     )}
                                                 </div>
-                                                {/* Future: Could add a button/accordion to show detailed A&P, Quiz, TD, Test scores */}
                                             </Card>
                                         ))}
                                     </div>
@@ -1332,23 +1343,21 @@ export default function DashboardPage() {
         )}
 
 
-        {selectedClassSlotDetails && (
+        {/* Teacher: Class Details & Attendance Modal */}
+        {selectedClassSlotDetails && userData?.role === 'Teacher' && (
           <Dialog open={showClassDetailsModal} onOpenChange={setShowClassDetailsModal}>
             <DialogContent className="sm:max-w-2xl max-h-[90vh] flex flex-col">
               <DialogHeader>
-                <DialogTitle>Class Details</DialogTitle>
+                <DialogTitle>Class Details &amp; Attendance</DialogTitle>
                  <DialogDescription>
-                  {selectedClassSlotDetails.moduleName} 
-                  {userData?.role === 'Teacher' && ` - Group: ${selectedClassSlotDetails.groupName}`}
-                  {userData?.role === 'Student' && ` - Teacher: ${selectedClassSlotDetails.teacherName}`}
+                  {selectedClassSlotDetails.moduleName} - Group: {selectedClassSlotDetails.groupName}
                   <br/>
                   Date: {selectedClassActualDate?.toLocaleDateString()} at {selectedClassSlotDetails.time} <br/>
                   Location: {selectedClassSlotDetails.roomHall}
                 </DialogDescription>
               </DialogHeader>
               
-              {userData?.role === 'Teacher' && (
-                isLoadingStudentsForModal ? <div className="flex justify-center items-center py-8"><Loader2 className="h-8 w-8 animate-spin"/></div> :
+              {isLoadingStudentsForModal ? <div className="flex justify-center items-center py-8"><Loader2 className="h-8 w-8 animate-spin"/></div> :
                 studentsForModal.length === 0 ? <p className="text-muted-foreground text-center py-4">No students found in this group or unable to load student data.</p> :
                 <ScrollArea className="flex-grow pr-4 -mr-4">
                   <div className="space-y-4 py-4">
@@ -1387,39 +1396,13 @@ export default function DashboardPage() {
                   })}
                   </div>
                 </ScrollArea>
-              )}
-
-              {userData?.role === 'Student' && (
-                 <div className="space-y-3 py-4 text-sm border-t mt-4">
-                    <h3 className="font-semibold text-base text-foreground">Your Attendance Status</h3>
-                    {myAttendanceForSelectedSlot === 'loading' && (
-                        <div className="flex items-center text-muted-foreground"><Loader2 className="mr-2 h-4 w-4 animate-spin" />Loading your attendance...</div>
-                    )}
-                    {myAttendanceForSelectedSlot === 'not_recorded' && (
-                        <p className="text-muted-foreground">Your attendance for this class has not been recorded yet.</p>
-                    )}
-                    {myAttendanceForSelectedSlot && typeof myAttendanceForSelectedSlot === 'object' && (
-                        <div className="space-y-1">
-                            <p><strong>Student:</strong> {userData.fullName}</p>
-                            <p><strong>Status:</strong> <span className={cn(
-                                myAttendanceForSelectedSlot.status === 'Present' && 'text-green-600',
-                                myAttendanceForSelectedSlot.status === 'Absent' && 'text-red-600',
-                                myAttendanceForSelectedSlot.status === 'AbsentWithJustification' && 'text-orange-600',
-                                'font-medium'
-                            )}>{myAttendanceForSelectedSlot.status.replace(/([A-Z])/g, ' $1').trim()}</span></p>
-                            {myAttendanceForSelectedSlot.status === 'AbsentWithJustification' && myAttendanceForSelectedSlot.justificationNote && (
-                                <p><strong>Justification:</strong> {myAttendanceForSelectedSlot.justificationNote}</p>
-                            )}
-                        </div>
-                    )}
-                </div>
-              )}
+              }
               
               <DialogFooter className="mt-auto pt-4 border-t">
                 <DialogClose asChild>
                   <Button type="button" variant="outline" disabled={isSavingAttendance}>Close</Button>
                 </DialogClose>
-                {userData?.role === 'Teacher' && studentsForModal.length > 0 && (
+                {studentsForModal.length > 0 && (
                   <Button onClick={handleSaveAttendance} disabled={isSavingAttendance || isLoadingStudentsForModal || studentAttendanceStates.size === 0}>
                     {isSavingAttendance ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : null} Save Attendance
                   </Button>
@@ -1428,6 +1411,103 @@ export default function DashboardPage() {
             </DialogContent>
           </Dialog>
         )}
+
+        {/* Student: Class Details & Own Attendance Modal */}
+        {selectedClassSlotDetails && userData?.role === 'Student' && (
+          <Dialog open={showClassDetailsModal} onOpenChange={setShowClassDetailsModal}>
+            <DialogContent className="sm:max-w-lg">
+              <DialogHeader>
+                <DialogTitle>Class Details</DialogTitle>
+                 <DialogDescription>
+                  {selectedClassSlotDetails.moduleName} - Teacher: {selectedClassSlotDetails.teacherName}
+                  <br/>
+                  Date: {selectedClassActualDate?.toLocaleDateString()} at {selectedClassSlotDetails.time} <br/>
+                  Location: {selectedClassSlotDetails.roomHall}
+                </DialogDescription>
+              </DialogHeader>
+              
+              <div className="space-y-3 py-4 text-sm border-t mt-4">
+                  <h3 className="font-semibold text-base text-foreground">Your Attendance Status</h3>
+                  {myAttendanceForSelectedSlot === 'loading' && (
+                      <div className="flex items-center text-muted-foreground"><Loader2 className="mr-2 h-4 w-4 animate-spin" />Loading your attendance...</div>
+                  )}
+                  {myAttendanceForSelectedSlot === 'not_recorded' && (
+                      <p className="text-muted-foreground">Your attendance for this class has not been recorded yet.</p>
+                  )}
+                  {myAttendanceForSelectedSlot && typeof myAttendanceForSelectedSlot === 'object' && (
+                      <div className="space-y-1">
+                          <p><strong>Student:</strong> {userData.fullName}</p>
+                          <p><strong>Status:</strong> <span className={cn(
+                              myAttendanceForSelectedSlot.status === 'Present' && 'text-green-600',
+                              myAttendanceForSelectedSlot.status === 'Absent' && 'text-red-600',
+                              myAttendanceForSelectedSlot.status === 'AbsentWithJustification' && 'text-orange-600',
+                              'font-medium'
+                          )}>{myAttendanceForSelectedSlot.status.replace(/([A-Z])/g, ' $1').trim()}</span></p>
+                          {myAttendanceForSelectedSlot.status === 'AbsentWithJustification' && myAttendanceForSelectedSlot.justificationNote && (
+                              <p><strong>Justification:</strong> {myAttendanceForSelectedSlot.justificationNote}</p>
+                          )}
+                      </div>
+                  )}
+              </div>
+              
+              <DialogFooter className="mt-auto pt-4 border-t">
+                <DialogClose asChild>
+                  <Button type="button" variant="outline">Close</Button>
+                </DialogClose>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        )}
+
+        {/* Student: Detailed Grade Modal */}
+        {selectedModuleForGradeDetails && userData?.role === 'Student' && (
+          <Dialog open={showStudentGradeDetailsModal} onOpenChange={(isOpen) => {
+            setShowStudentGradeDetailsModal(isOpen);
+            if (!isOpen) setSelectedModuleForGradeDetails(null);
+          }}>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle className="text-xl">Grade Details: {selectedModuleForGradeDetails.moduleName}</DialogTitle>
+                <DialogDescription>Taught by: {selectedModuleForGradeDetails.teacherName}</DialogDescription>
+              </DialogHeader>
+              <div className="py-4 space-y-3">
+                {selectedModuleForGradeDetails.grade ? (
+                  <>
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground">Attendance &amp; Participation:</span>
+                      <span className="font-medium text-foreground">{selectedModuleForGradeDetails.grade.attendanceParticipation.toFixed(2)} / 8.00</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground">Quiz:</span>
+                      <span className="font-medium text-foreground">{selectedModuleForGradeDetails.grade.quiz.toFixed(2)} / 12.00</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground">TD Score (Calculated):</span>
+                      <span className="font-medium text-foreground">{selectedModuleForGradeDetails.grade.TD.toFixed(2)} / 20.00</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground">Test Score:</span>
+                      <span className="font-medium text-foreground">{selectedModuleForGradeDetails.grade.test.toFixed(2)} / 20.00</span>
+                    </div>
+                    <div className="border-t my-2"></div>
+                    <div className="flex justify-between items-center text-lg">
+                      <strong className="text-primary">Module Total:</strong>
+                      <strong className="text-primary">{selectedModuleForGradeDetails.grade.moduleTotal.toFixed(2)} / 20.00</strong>
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-muted-foreground text-center py-6">Grades for this module have not been recorded yet.</p>
+                )}
+              </div>
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button variant="outline">Close</Button>
+                </DialogClose>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        )}
+
       </main>
       <footer className="py-4 text-center text-sm text-muted-foreground border-t">
         <p>Edutrack &copy; {new Date().getFullYear()}</p>

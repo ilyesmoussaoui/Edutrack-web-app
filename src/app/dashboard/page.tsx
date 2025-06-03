@@ -12,7 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter }
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogClose, DialogFooter } from "@/components/ui/dialog";
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, AlertTriangle, LogOut, CalendarDays, ChevronLeft, ChevronRight, Info, ClipboardEdit, ListChecks, CheckSquare, BookOpen, Users as UsersIcon, AlertCircleIcon, PercentCircle } from 'lucide-react';
+import { Loader2, AlertTriangle, LogOut, CalendarDays, ChevronLeft, ChevronRight, Info, ClipboardEdit, ListChecks, CheckSquare, BookOpen, Users as UsersIcon, AlertCircleIcon, PercentCircle, GraduationCap as GradeIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
@@ -91,11 +91,11 @@ interface AttendanceRecord {
 interface StudentGradeEntry {
   studentId: string;
   studentFullName: string;
-  attendanceParticipationScore: string; // Stored as string for input control
-  quizScore: string; // Stored as string for input control
-  tdScore: number; // Calculated, stored as number
-  testScore: string; // Stored as string for input control
-  moduleTotal: number; // Calculated, stored as number
+  attendanceParticipationScore: string; 
+  quizScore: string; 
+  tdScore: number; 
+  testScore: string; 
+  moduleTotal: number; 
   tdError?: string;
   originalGradeDocId?: string;
   isModified?: boolean;
@@ -111,8 +111,16 @@ interface GradeDocument {
   TD: number;
   test: number;
   moduleTotal: number;
-  createdAt?: any; // serverTimestamp on create
-  updatedAt: any; // serverTimestamp on create/update
+  createdAt?: any; 
+  updatedAt: any; 
+}
+
+interface StudentModuleGradeInfo {
+  moduleName: string;
+  teacherName: string;
+  teacherId: string;
+  grade?: GradeDocument;
+  isLoadingGrade: boolean; 
 }
 
 
@@ -179,7 +187,7 @@ export default function DashboardPage() {
   
   const [myAttendanceForSelectedSlot, setMyAttendanceForSelectedSlot] = useState<AttendanceRecord | null | 'loading' | 'not_recorded'>('not_recorded');
 
-  // States for Grades Management Tab
+  // States for Teacher Grades Management Tab
   const [managedGroupsList, setManagedGroupsList] = useState<ManagedGroupInfo[]>([]);
   const [isLoadingManagedGroups, setIsLoadingManagedGroups] = useState(false);
   const [selectedGroupForGrading, setSelectedGroupForGrading] = useState<ManagedGroupInfo | null>(null);
@@ -189,6 +197,10 @@ export default function DashboardPage() {
   const [studentsForGrading, setStudentsForGrading] = useState<StudentGradeEntry[]>([]);
   const [isLoadingStudentsForGrading, setIsLoadingStudentsForGrading] = useState(false);
   const [isSavingGrades, setIsSavingGrades] = useState(false);
+
+  // States for Student "My Grades" Tab
+  const [studentModulesWithGrades, setStudentModulesWithGrades] = useState<StudentModuleGradeInfo[]>([]);
+  const [isLoadingStudentModuleGrades, setIsLoadingStudentModuleGrades] = useState(false);
 
 
   useEffect(() => {
@@ -207,6 +219,7 @@ export default function DashboardPage() {
       setAvailableModulesForSelectedGroup([]);
       setSelectedModuleForGrading(null);
       setStudentsForGrading([]);
+      setStudentModulesWithGrades([]);
 
 
       if (user) {
@@ -429,7 +442,7 @@ export default function DashboardPage() {
     setAvailableModulesForSelectedGroup(sortedModules);
   
     if (selectedModuleForGrading && !sortedModules.includes(selectedModuleForGrading)) {
-      setSelectedModuleForGrading(null); // Reset if current module not in new list
+      setSelectedModuleForGrading(null); 
     }
   
     setIsLoadingModulesForGroup(false);
@@ -515,6 +528,56 @@ export default function DashboardPage() {
 
     fetchStudentsAndGrades();
   }, [selectedGroupForGrading, selectedModuleForGrading, currentUser, toast]);
+
+  useEffect(() => {
+    if (userData?.role === 'Student' && userData.assignedGroupId && currentUser && studentSchedule.size > 0) {
+        const fetchStudentGrades = async () => {
+            setIsLoadingStudentModuleGrades(true);
+            const uniqueModulesMap = new Map<string, { moduleName: string; teacherId: string; teacherName: string }>();
+            
+            studentSchedule.forEach(slot => {
+                const key = `${slot.moduleName}-${slot.teacherId}`;
+                if (!uniqueModulesMap.has(key)) {
+                    uniqueModulesMap.set(key, {
+                        moduleName: slot.moduleName,
+                        teacherId: slot.teacherId,
+                        teacherName: slot.teacherName,
+                    });
+                }
+            });
+
+            const moduleGradePromises = Array.from(uniqueModulesMap.values()).map(async (moduleInfo) => {
+                const gradeQuery = query(
+                    collection(db, "grades"),
+                    where("studentId", "==", currentUser.uid),
+                    where("groupId", "==", userData.assignedGroupId!),
+                    where("moduleName", "==", moduleInfo.moduleName.toUpperCase()),
+                    where("teacherId", "==", moduleInfo.teacherId)
+                );
+                const gradeSnap = await getDocs(gradeQuery);
+                let gradeData: GradeDocument | undefined = undefined;
+                if (!gradeSnap.empty) {
+                    gradeData = gradeSnap.docs[0].data() as GradeDocument;
+                }
+                return { ...moduleInfo, grade: gradeData, isLoadingGrade: false };
+            });
+
+            try {
+                const results = await Promise.all(moduleGradePromises);
+                results.sort((a,b) => a.moduleName.localeCompare(b.moduleName));
+                setStudentModulesWithGrades(results);
+            } catch (err: any) {
+                console.error("Error fetching student grades:", err);
+                toast({ variant: "destructive", title: "Grades Error", description: `Could not load your grades: ${err.message}` });
+            } finally {
+                setIsLoadingStudentModuleGrades(false);
+            }
+        };
+        fetchStudentGrades();
+    } else {
+        setStudentModulesWithGrades([]);
+    }
+  }, [studentSchedule, userData, currentUser, toast]);
 
 
   const handleLogout = async () => {
@@ -704,7 +767,7 @@ export default function DashboardPage() {
 
           if (field === 'attendanceParticipationScore') {
             if (isNaN(numericValue)) numericValue = 0; else numericValue = Math.max(0, Math.min(8, numericValue));
-            stringValue = value === '' ? '' : String(numericValue); // Keep empty string if user deletes input
+            stringValue = value === '' ? '' : String(numericValue); 
             updatedStudent.attendanceParticipationScore = stringValue;
           } else if (field === 'quizScore') {
             if (isNaN(numericValue)) numericValue = 0; else numericValue = Math.max(0, Math.min(12, numericValue));
@@ -721,7 +784,7 @@ export default function DashboardPage() {
           updatedStudent.tdScore = Math.min(20, apScoreNum + qScoreNum);
 
           if (apScoreNum + qScoreNum > 20) {
-            updatedStudent.tdError = "Total TD cannot exceed 20.";
+            updatedStudent.tdError = "Total TD (A&P + Quiz) cannot exceed 20. Please adjust scores.";
           }
           
           const currentTestScoreNum = parseFloat(updatedStudent.testScore) || 0;
@@ -756,7 +819,6 @@ export default function DashboardPage() {
         const ap = parseFloat(student.attendanceParticipationScore) || 0;
         const quiz = parseFloat(student.quizScore) || 0;
         const test = parseFloat(student.testScore) || 0;
-        // student.tdScore and student.moduleTotal are already numbers
         
         const gradeData: Omit<GradeDocument, 'createdAt'> & { createdAt?: any, updatedAt: any } = {
           studentId: student.studentId,
@@ -918,7 +980,7 @@ export default function DashboardPage() {
                       </React.Fragment>
                     ))}
                   </div>
-                  {currentScheduleMap.size === 0 && !isLoadingTeacherSchedule && !isLoadingStudentSchedule && (
+                  {currentScheduleMap.size === 0 && !isLoadingTeacherSchedule && (
                       <p className="text-center text-muted-foreground py-4">You have no classes in your recurring schedule for this week.</p>
                   )}
                 </div>
@@ -1114,78 +1176,140 @@ export default function DashboardPage() {
         )}
 
         {userData?.role === 'Student' && userData.assignedGroupId && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center">
-                <CalendarDays className="mr-2 h-6 w-6 text-primary" />
-                {displayMessage ? "Important Message" : "Your Weekly Schedule"}
-              </CardTitle>
-              {userData && <CardDescription>Role: {userData.role}</CardDescription>}
-            </CardHeader>
-            <CardContent>
-               {displayMessage ? (
-                <p className="text-lg text-center py-8 px-4 bg-secondary/30 rounded-md">{displayMessage}</p>
-              ) : (
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <Button variant="outline" size="sm" onClick={handlePreviousWeek} disabled={isSavingAttendance}> 
-                      <ChevronLeft className="h-4 w-4 mr-1" /> Previous Week
-                    </Button>
-                    <p className="text-sm font-medium text-muted-foreground">{currentWeekIdentifier}</p>
-                    <Button variant="outline" size="sm" onClick={handleNextWeek} disabled={isSavingAttendance}> 
-                      Next Week <ChevronRight className="h-4 w-4 ml-1" />
-                    </Button>
-                  </div>
-                  <div className="grid grid-cols-[auto_repeat(5,minmax(0,1fr))] gap-px border rounded-lg p-px bg-border overflow-hidden">
-                    <div className="p-2 text-xs font-medium text-muted-foreground bg-muted"></div> 
-                    {DAYS_OF_WEEK.map((day) => (
-                      <div key={day} className="font-semibold p-2 border-b border-r border-border text-center bg-muted text-sm text-foreground">
-                        {day}
-                      </div>
-                    ))}
-                    {TIME_SLOTS.map((timeSlot) => (
-                      <React.Fragment key={timeSlot}>
-                        <div className="font-semibold p-2 border-r border-border text-center bg-muted text-sm flex items-center justify-center text-foreground">
-                          {timeSlot.replace(' - ', '\n-\n')}
-                        </div>
-                        {DAYS_OF_WEEK.map((day) => {
-                          const slotKey = createSlotKey(day, timeSlot);
-                          const scheduledClass = currentScheduleMap.get(slotKey);
-                          return (
-                            <div
-                              key={`${day}-${timeSlot}`}
-                              className={cn(
-                                "border-r border-b border-border min-h-[100px] bg-background p-1.5 text-xs leading-tight",
-                                scheduledClass && "cursor-pointer hover:bg-accent/50 transition-colors",
-                                day === DAYS_OF_WEEK[DAYS_OF_WEEK.length -1] && "border-r-0",
-                                timeSlot === TIME_SLOTS[TIME_SLOTS.length -1] && "border-b-0"
-                              )}
-                              onClick={scheduledClass ? () => handleSlotClick(scheduledClass, day) : undefined}
-                            >
-                              {scheduledClass ? (
-                                <div className="flex flex-col h-full">
-                                  <p className="font-semibold text-primary truncate">{scheduledClass.moduleName}</p>
-                                  <p className="text-muted-foreground truncate">Teacher: {scheduledClass.teacherName}</p>
-                                  <p className="text-muted-foreground truncate mt-auto pt-1">@{scheduledClass.roomHall}</p>
+          displayMessage ? (
+            <Card>
+                <CardHeader>
+                    <CardTitle className="flex items-center">
+                        <Info className="mr-2 h-6 w-6 text-primary" /> Important Message
+                    </CardTitle>
+                    {userData && <CardDescription>Role: {userData.role}</CardDescription>}
+                </CardHeader>
+                <CardContent>
+                    <p className="text-lg text-center py-8 px-4 bg-secondary/30 rounded-md">{displayMessage}</p>
+                </CardContent>
+            </Card>
+          ) : (
+            <Tabs defaultValue="schedule" className="w-full space-y-4">
+                <TabsList className="grid w-full grid-cols-2">
+                    <TabsTrigger value="schedule">My Schedule</TabsTrigger>
+                    <TabsTrigger value="grades">My Grades</TabsTrigger>
+                </TabsList>
+                <TabsContent value="schedule">
+                    <Card>
+                        <CardHeader>
+                            <CardTitle className="flex items-center">
+                                <CalendarDays className="mr-2 h-6 w-6 text-primary" />
+                                Your Weekly Schedule
+                            </CardTitle>
+                            {userData && <CardDescription>Group: {studentSchedule.values().next().value?.groupName || 'Loading group...'}</CardDescription>}
+                        </CardHeader>
+                        <CardContent>
+                            <div className="space-y-4">
+                                <div className="flex items-center justify-between">
+                                    <Button variant="outline" size="sm" onClick={handlePreviousWeek} disabled={isSavingAttendance}> 
+                                    <ChevronLeft className="h-4 w-4 mr-1" /> Previous Week
+                                    </Button>
+                                    <p className="text-sm font-medium text-muted-foreground">{currentWeekIdentifier}</p>
+                                    <Button variant="outline" size="sm" onClick={handleNextWeek} disabled={isSavingAttendance}> 
+                                    Next Week <ChevronRight className="h-4 w-4 ml-1" />
+                                    </Button>
                                 </div>
-                              ) : (
-                                <div className="h-full flex items-center justify-center text-muted-foreground/30">
-                                  <Info className="h-4 w-4"/>
+                                <div className="grid grid-cols-[auto_repeat(5,minmax(0,1fr))] gap-px border rounded-lg p-px bg-border overflow-hidden">
+                                    <div className="p-2 text-xs font-medium text-muted-foreground bg-muted"></div> 
+                                    {DAYS_OF_WEEK.map((day) => (
+                                    <div key={day} className="font-semibold p-2 border-b border-r border-border text-center bg-muted text-sm text-foreground">
+                                        {day}
+                                    </div>
+                                    ))}
+                                    {TIME_SLOTS.map((timeSlot) => (
+                                    <React.Fragment key={timeSlot}>
+                                        <div className="font-semibold p-2 border-r border-border text-center bg-muted text-sm flex items-center justify-center text-foreground">
+                                        {timeSlot.replace(' - ', '\n-\n')}
+                                        </div>
+                                        {DAYS_OF_WEEK.map((day) => {
+                                        const slotKey = createSlotKey(day, timeSlot);
+                                        const scheduledClass = currentScheduleMap.get(slotKey);
+                                        return (
+                                            <div
+                                            key={`${day}-${timeSlot}`}
+                                            className={cn(
+                                                "border-r border-b border-border min-h-[100px] bg-background p-1.5 text-xs leading-tight",
+                                                scheduledClass && "cursor-pointer hover:bg-accent/50 transition-colors",
+                                                day === DAYS_OF_WEEK[DAYS_OF_WEEK.length -1] && "border-r-0",
+                                                timeSlot === TIME_SLOTS[TIME_SLOTS.length -1] && "border-b-0"
+                                            )}
+                                            onClick={scheduledClass ? () => handleSlotClick(scheduledClass, day) : undefined}
+                                            >
+                                            {scheduledClass ? (
+                                                <div className="flex flex-col h-full">
+                                                <p className="font-semibold text-primary truncate">{scheduledClass.moduleName}</p>
+                                                <p className="text-muted-foreground truncate">Teacher: {scheduledClass.teacherName}</p>
+                                                <p className="text-muted-foreground truncate mt-auto pt-1">@{scheduledClass.roomHall}</p>
+                                                </div>
+                                            ) : (
+                                                <div className="h-full flex items-center justify-center text-muted-foreground/30">
+                                                <Info className="h-4 w-4"/>
+                                                </div>
+                                            )}
+                                            </div>
+                                        );
+                                        })}
+                                    </React.Fragment>
+                                    ))}
                                 </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </React.Fragment>
-                    ))}
-                  </div>
-                  {currentScheduleMap.size === 0 && !isLoadingStudentSchedule && (
-                      <p className="text-center text-muted-foreground py-4">You have no classes in your recurring schedule for this week.</p>
-                  )}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+                                {currentScheduleMap.size === 0 && !isLoadingStudentSchedule && (
+                                    <p className="text-center text-muted-foreground py-4">You have no classes in your recurring schedule for this week.</p>
+                                )}
+                                </div>
+                        </CardContent>
+                    </Card>
+                </TabsContent>
+                 <TabsContent value="grades">
+                    <Card>
+                        <CardHeader>
+                            <CardTitle className="flex items-center">
+                                <GradeIcon className="mr-2 h-6 w-6 text-primary" /> My Grades
+                            </CardTitle>
+                            <CardDescription>View your grades for different modules.</CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                            {isLoadingStudentModuleGrades ? (
+                                <div className="flex items-center justify-center py-8">
+                                    <Loader2 className="mr-2 h-8 w-8 animate-spin text-primary" />
+                                    <p className="text-muted-foreground">Loading your grades...</p>
+                                </div>
+                            ) : studentModulesWithGrades.length === 0 ? (
+                                <p className="text-muted-foreground text-center py-4">No modules or grades found for your program yet.</p>
+                            ) : (
+                                <ScrollArea className="h-[400px] pr-3">
+                                    <div className="space-y-3">
+                                        {studentModulesWithGrades.map((moduleGradeInfo, index) => (
+                                            <Card key={`${moduleGradeInfo.moduleName}-${moduleGradeInfo.teacherId}-${index}`} className="p-4">
+                                                <div className="flex justify-between items-start">
+                                                    <div>
+                                                        <h4 className="font-semibold text-lg text-primary">{moduleGradeInfo.moduleName}</h4>
+                                                        <p className="text-sm text-muted-foreground">Taught by: {moduleGradeInfo.teacherName}</p>
+                                                    </div>
+                                                    {moduleGradeInfo.grade ? (
+                                                         <div className="text-right">
+                                                            <p className="text-xl font-bold text-foreground">{moduleGradeInfo.grade.moduleTotal.toFixed(2)} <span className="text-xs text-muted-foreground">/ 20</span></p>
+                                                            <p className="text-xs text-muted-foreground">Module Total</p>
+                                                        </div>
+                                                    ) : (
+                                                        <p className="text-sm text-muted-foreground italic">Grades not yet recorded</p>
+                                                    )}
+                                                </div>
+                                                {/* Future: Could add a button/accordion to show detailed A&P, Quiz, TD, Test scores */}
+                                            </Card>
+                                        ))}
+                                    </div>
+                                </ScrollArea>
+                            )}
+                        </CardContent>
+                    </Card>
+                </TabsContent>
+            </Tabs>
+          )
         )}
         
         {!isLoadingUser && !error && !displayMessage && 

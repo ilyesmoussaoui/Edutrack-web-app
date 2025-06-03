@@ -12,12 +12,13 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter }
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogClose, DialogFooter } from "@/components/ui/dialog";
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, AlertTriangle, LogOut, CalendarDays, ChevronLeft, ChevronRight, Info, ClipboardEdit, ListChecks, CheckSquare } from 'lucide-react';
+import { Loader2, AlertTriangle, LogOut, CalendarDays, ChevronLeft, ChevronRight, Info, ClipboardEdit, ListChecks, CheckSquare, BookOpen } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 
 
@@ -155,6 +156,9 @@ export default function DashboardPage() {
   const [managedGroupsList, setManagedGroupsList] = useState<ManagedGroupInfo[]>([]);
   const [isLoadingManagedGroups, setIsLoadingManagedGroups] = useState(false);
   const [selectedGroupForGrading, setSelectedGroupForGrading] = useState<ManagedGroupInfo | null>(null);
+  const [availableModulesForSelectedGroup, setAvailableModulesForSelectedGroup] = useState<string[]>([]);
+  const [isLoadingModulesForGroup, setIsLoadingModulesForGroup] = useState(false);
+  const [selectedModuleForGrading, setSelectedModuleForGrading] = useState<string | null>(null);
 
 
   useEffect(() => {
@@ -170,6 +174,9 @@ export default function DashboardPage() {
       setStudentSchedule(new Map());
       setManagedGroupsList([]);
       setSelectedGroupForGrading(null);
+      setAvailableModulesForSelectedGroup([]);
+      setSelectedModuleForGrading(null);
+
 
       if (user) {
         setCurrentUser(user);
@@ -219,16 +226,13 @@ export default function DashboardPage() {
         let hasAssignments = false;
         snapshot.docs.forEach((docSnap) => {
           const pathSegments = docSnap.ref.path.split('/');
-          // departments/{deptId}/years/{yearId}/specialities/{specId}/groups/{groupId}/schedule/{scheduleDocId}
-          // indices:      0        1      2      3        4         5       6        7       8            9
-          if (pathSegments.length >= 8) { // Basic validation
+          if (pathSegments.length >= 8) { 
             const slotData = { 
               id: docSnap.id, 
               ...docSnap.data(),
               departmentId: pathSegments[1],
               yearId: pathSegments[3],
               specialityId: pathSegments[5],
-              // groupId is already in docSnap.data(), but ensuring it's from path if needed
               groupId: pathSegments[7] 
             } as ScheduleSlotFetchedWithParentIds;
             const slotKey = createSlotKey(slotData.day, slotData.time);
@@ -306,7 +310,6 @@ export default function DashboardPage() {
     }
   }, [userData, currentUser, displayMessage, isLoadingUser, error]);
 
-  // Effect to populate managedGroupsList for Grades Management tab
   useEffect(() => {
     if (userData?.role !== 'Teacher' || teacherSchedule.size === 0) {
       setManagedGroupsList([]);
@@ -359,7 +362,8 @@ export default function DashboardPage() {
 
         } catch (err) {
           console.error(`Error fetching path for group ${groupCandidate.id}:`, err);
-          groupsWithPaths.push({ // Add with placeholder path if details fetch fails
+          toast({ variant: "destructive", title: "Path Error", description: `Could not fetch full path for group ${groupCandidate.name}. Some details might be missing.`});
+          groupsWithPaths.push({ 
             ...groupCandidate,
             departmentName: "Error", yearName: "Error", specialityName: "Error",
             path: `Group: ${groupCandidate.name} (Error fetching full path)`,
@@ -367,14 +371,41 @@ export default function DashboardPage() {
         }
       }
       
-      // Sort by path for consistent ordering
       groupsWithPaths.sort((a, b) => a.path.localeCompare(b.path));
       setManagedGroupsList(groupsWithPaths);
       setIsLoadingManagedGroups(false);
     };
 
     processGroups();
-  }, [teacherSchedule, userData?.role]);
+  }, [teacherSchedule, userData?.role, toast]);
+
+  useEffect(() => {
+    if (!selectedGroupForGrading || !currentUser || teacherSchedule.size === 0) {
+      setAvailableModulesForSelectedGroup([]);
+      setSelectedModuleForGrading(null);
+      return;
+    }
+  
+    setIsLoadingModulesForGroup(true);
+    const modules = new Set<string>();
+  
+    teacherSchedule.forEach(slot => {
+      // teacherSchedule is already filtered for the current teacher
+      if (slot.groupId === selectedGroupForGrading.id && slot.moduleName) {
+        modules.add(slot.moduleName);
+      }
+    });
+  
+    const sortedModules = Array.from(modules).sort((a, b) => a.localeCompare(b));
+    setAvailableModulesForSelectedGroup(sortedModules);
+  
+    // If current selected module is not in the new list (e.g. group changed), reset it
+    if (selectedModuleForGrading && !sortedModules.includes(selectedModuleForGrading)) {
+      setSelectedModuleForGrading(null);
+    }
+  
+    setIsLoadingModulesForGroup(false);
+  }, [selectedGroupForGrading, teacherSchedule, currentUser, selectedModuleForGrading]);
 
 
   const handleLogout = async () => {
@@ -473,7 +504,9 @@ export default function DashboardPage() {
     } else if (userData?.role === 'Student' && currentUser) {
         setMyAttendanceForSelectedSlot('loading');
         try {
-            const attendanceDocId = `${classInstanceIdGenerated}_${currentUser.uid}`; // Unique ID for student's attendance record
+            // Student's own attendance doesn't use classInstanceId + studentId for doc ID like teacher save
+            // It should use the same ID format that saving attendance uses.
+            const attendanceDocId = `${classInstanceIdGenerated}_${currentUser.uid}`; 
             const attendanceDocRef = doc(db, "attendances", attendanceDocId);
             const docSnap = await getDoc(attendanceDocRef);
             if (docSnap.exists()) {
@@ -679,7 +712,7 @@ export default function DashboardPage() {
                     <CardTitle className="flex items-center">
                         <ListChecks className="mr-2 h-5 w-5 text-primary" />Grades Management
                     </CardTitle>
-                    <CardDescription>Select a group to manage grades for its modules.</CardDescription>
+                    <CardDescription>Select a group, then a module to manage student grades.</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     {isLoadingManagedGroups ? (
@@ -692,7 +725,7 @@ export default function DashboardPage() {
                     ) : (
                       <div className="space-y-3">
                         <h3 className="text-md font-medium text-foreground mb-2">Your Groups:</h3>
-                        <ScrollArea className="h-[300px] pr-3">
+                        <ScrollArea className="h-[200px] pr-3">
                           {managedGroupsList.map(group => (
                             <Card 
                               key={group.id} 
@@ -700,7 +733,10 @@ export default function DashboardPage() {
                                 "mb-2 cursor-pointer hover:shadow-md transition-shadow",
                                 selectedGroupForGrading?.id === group.id && "ring-2 ring-primary bg-primary/5"
                               )}
-                              onClick={() => setSelectedGroupForGrading(group)}
+                              onClick={() => {
+                                setSelectedGroupForGrading(group);
+                                setSelectedModuleForGrading(null); // Reset module when group changes
+                              }}
                             >
                               <CardContent className="p-3">
                                 <p className="font-semibold text-primary-focus">{group.name}</p>
@@ -713,16 +749,54 @@ export default function DashboardPage() {
                     )}
 
                     {selectedGroupForGrading && (
-                      <div className="mt-6 pt-4 border-t">
-                        <h3 className="text-lg font-semibold text-foreground mb-3">
-                          Modules for <span className="text-primary">{selectedGroupForGrading.name}</span>
-                        </h3>
-                        <p className="text-muted-foreground mb-4">
-                          Module selection and grade entry for this group will appear here. This functionality is under development.
-                        </p>
-                        <Button disabled>
-                          <CheckSquare className="mr-2 h-4 w-4"/> Select Module & Enter Grades (Coming Soon)
-                        </Button>
+                      <div className="mt-4 pt-4 border-t">
+                        <h4 className="text-md font-semibold text-foreground mb-2">
+                          Select Module for <span className="text-primary">{selectedGroupForGrading.name}</span>
+                        </h4>
+                        {isLoadingModulesForGroup ? (
+                          <div className="flex items-center text-muted-foreground">
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading modules...
+                          </div>
+                        ) : availableModulesForSelectedGroup.length > 0 ? (
+                          <div className="max-w-sm space-y-2">
+                            <Label htmlFor="module-select-grading">Module</Label>
+                            <Select
+                              value={selectedModuleForGrading || ""}
+                              onValueChange={(value) => setSelectedModuleForGrading(value === "" ? null : value)}
+                            >
+                              <SelectTrigger id="module-select-grading">
+                                <SelectValue placeholder="Select a module" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {availableModulesForSelectedGroup.map(moduleName => (
+                                  <SelectItem key={moduleName} value={moduleName}>
+                                    {moduleName}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        ) : (
+                          <p className="text-sm text-muted-foreground">No modules found taught by you in this group, or schedule data is still loading.</p>
+                        )}
+
+                        {selectedModuleForGrading && (
+                          <div className="mt-6 pt-4 border-t">
+                            <h3 className="text-lg font-semibold text-foreground mb-3 flex items-center">
+                              <BookOpen className="mr-2 h-5 w-5 text-primary" />
+                              Grade Entry for <span className="text-primary ml-1">{selectedModuleForGrading}</span>
+                            </h3>
+                            <p className="text-muted-foreground mb-4">
+                              Student list and grade entry form will appear here. This functionality is under development.
+                            </p>
+                            <Button disabled>
+                              <ClipboardEdit className="mr-2 h-4 w-4"/> View Students & Enter Grades (Coming Soon)
+                            </Button>
+                          </div>
+                        )}
+                        {!selectedModuleForGrading && selectedGroupForGrading && availableModulesForSelectedGroup.length > 0 && !isLoadingModulesForGroup && (
+                            <p className="text-sm text-muted-foreground mt-4">Please select a module to proceed.</p>
+                        )}
                       </div>
                     )}
                   </CardContent>

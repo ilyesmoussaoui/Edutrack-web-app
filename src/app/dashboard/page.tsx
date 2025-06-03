@@ -12,7 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter }
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogClose, DialogFooter } from "@/components/ui/dialog";
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, AlertTriangle, LogOut, CalendarDays, ChevronLeft, ChevronRight, Info, ClipboardEdit, ListChecks, CheckSquare, BookOpen } from 'lucide-react';
+import { Loader2, AlertTriangle, LogOut, CalendarDays, ChevronLeft, ChevronRight, Info, ClipboardEdit, ListChecks, CheckSquare, BookOpen, Users as UsersIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
@@ -88,6 +88,15 @@ interface AttendanceRecord {
   timestamp: Timestamp; 
 }
 
+interface StudentGradeEntry {
+  studentId: string;
+  studentFullName: string;
+  attendanceParticipationScore: string; // Keep as string for controlled input
+  quizScore: string;                  // Keep as string for controlled input
+  tdScore: number;                     // Calculated, always number
+  testScore: string;                   // Keep as string for controlled input
+}
+
 
 const DAYS_OF_WEEK = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"];
 const TIME_SLOTS = [
@@ -159,6 +168,8 @@ export default function DashboardPage() {
   const [availableModulesForSelectedGroup, setAvailableModulesForSelectedGroup] = useState<string[]>([]);
   const [isLoadingModulesForGroup, setIsLoadingModulesForGroup] = useState(false);
   const [selectedModuleForGrading, setSelectedModuleForGrading] = useState<string | null>(null);
+  const [studentsForGrading, setStudentsForGrading] = useState<StudentGradeEntry[]>([]);
+  const [isLoadingStudentsForGrading, setIsLoadingStudentsForGrading] = useState(false);
 
 
   useEffect(() => {
@@ -176,6 +187,7 @@ export default function DashboardPage() {
       setSelectedGroupForGrading(null);
       setAvailableModulesForSelectedGroup([]);
       setSelectedModuleForGrading(null);
+      setStudentsForGrading([]);
 
 
       if (user) {
@@ -390,8 +402,7 @@ export default function DashboardPage() {
     const modules = new Set<string>();
   
     teacherSchedule.forEach(slot => {
-      // teacherSchedule is already filtered for the current teacher
-      if (slot.groupId === selectedGroupForGrading.id && slot.moduleName) {
+      if (slot.groupId === selectedGroupForGrading.id && slot.teacherId === currentUser.uid && slot.moduleName) {
         modules.add(slot.moduleName);
       }
     });
@@ -399,13 +410,56 @@ export default function DashboardPage() {
     const sortedModules = Array.from(modules).sort((a, b) => a.localeCompare(b));
     setAvailableModulesForSelectedGroup(sortedModules);
   
-    // If current selected module is not in the new list (e.g. group changed), reset it
     if (selectedModuleForGrading && !sortedModules.includes(selectedModuleForGrading)) {
       setSelectedModuleForGrading(null);
     }
   
     setIsLoadingModulesForGroup(false);
   }, [selectedGroupForGrading, teacherSchedule, currentUser, selectedModuleForGrading]);
+
+  useEffect(() => {
+    if (!selectedGroupForGrading || !selectedModuleForGrading || !currentUser) {
+      setStudentsForGrading([]);
+      return;
+    }
+
+    const fetchStudents = async () => {
+      setIsLoadingStudentsForGrading(true);
+      setStudentsForGrading([]);
+      try {
+        const studentsQuery = query(
+          collection(db, "users"),
+          where("assignedGroupId", "==", selectedGroupForGrading.id),
+          where("role", "==", "Student"),
+          orderBy("fullName")
+        );
+        const studentDocsSnap = await getDocs(studentsQuery);
+        const fetchedStudents = studentDocsSnap.docs.map(sDoc => {
+          const studentData = sDoc.data() as StudentFromUserDoc;
+          return {
+            studentId: sDoc.id,
+            studentFullName: studentData.fullName,
+            attendanceParticipationScore: '',
+            quizScore: '',
+            tdScore: 0,
+            testScore: '',
+          } as StudentGradeEntry;
+        });
+        setStudentsForGrading(fetchedStudents);
+      } catch (err: any) {
+        console.error("Error fetching students for grading:", err);
+        toast({
+          variant: "destructive",
+          title: "Student Loading Error",
+          description: `Could not load students for ${selectedGroupForGrading.name}: ${err.message}`,
+        });
+      } finally {
+        setIsLoadingStudentsForGrading(false);
+      }
+    };
+
+    fetchStudents();
+  }, [selectedGroupForGrading, selectedModuleForGrading, currentUser, toast]);
 
 
   const handleLogout = async () => {
@@ -453,7 +507,7 @@ export default function DashboardPage() {
         if (!slotData?.groupId) {
           console.error("Error in handleSlotClick (Teacher): slotData.groupId is missing.", slotData);
           toast({ variant: "destructive", title: "Configuration Error", description: "The selected class slot is missing group information. Cannot load students." });
-          setIsLoadingStudentsForModal(false);
+          setIsLoadingStudentsForModal(false); 
           return; 
         }
 
@@ -504,8 +558,6 @@ export default function DashboardPage() {
     } else if (userData?.role === 'Student' && currentUser) {
         setMyAttendanceForSelectedSlot('loading');
         try {
-            // Student's own attendance doesn't use classInstanceId + studentId for doc ID like teacher save
-            // It should use the same ID format that saving attendance uses.
             const attendanceDocId = `${classInstanceIdGenerated}_${currentUser.uid}`; 
             const attendanceDocRef = doc(db, "attendances", attendanceDocId);
             const docSnap = await getDoc(attendanceDocRef);
@@ -584,6 +636,40 @@ export default function DashboardPage() {
     } finally {
         setIsSavingAttendance(false);
     }
+  };
+
+  const handleGradeChange = (studentId: string, field: keyof Pick<StudentGradeEntry, 'attendanceParticipationScore' | 'quizScore' | 'testScore'>, value: string) => {
+    setStudentsForGrading(prevStudents =>
+      prevStudents.map(student => {
+        if (student.studentId === studentId) {
+          let numericValue = parseFloat(value);
+          if (isNaN(numericValue)) {
+            numericValue = 0; // Or treat empty string as 0, or keep it as string '' for controlled input
+          }
+
+          const updatedStudent = { ...student };
+
+          if (field === 'attendanceParticipationScore') {
+            numericValue = Math.max(0, Math.min(8, numericValue));
+            updatedStudent.attendanceParticipationScore = value === '' ? '' : String(numericValue); // Keep as string for input
+          } else if (field === 'quizScore') {
+            numericValue = Math.max(0, Math.min(12, numericValue));
+            updatedStudent.quizScore = value === '' ? '' : String(numericValue); // Keep as string for input
+          } else if (field === 'testScore') {
+            numericValue = Math.max(0, Math.min(20, numericValue));
+            updatedStudent.testScore = value === '' ? '' : String(numericValue); // Keep as string for input
+          }
+          
+          // Recalculate TD score
+          const apScore = parseFloat(updatedStudent.attendanceParticipationScore) || 0;
+          const qScore = parseFloat(updatedStudent.quizScore) || 0;
+          updatedStudent.tdScore = Math.min(20, apScore + qScore);
+          
+          return updatedStudent;
+        }
+        return student;
+      })
+    );
   };
 
 
@@ -735,7 +821,8 @@ export default function DashboardPage() {
                               )}
                               onClick={() => {
                                 setSelectedGroupForGrading(group);
-                                setSelectedModuleForGrading(null); // Reset module when group changes
+                                setSelectedModuleForGrading(null); 
+                                setStudentsForGrading([]);
                               }}
                             >
                               <CardContent className="p-3">
@@ -762,7 +849,10 @@ export default function DashboardPage() {
                             <Label htmlFor="module-select-grading">Module</Label>
                             <Select
                               value={selectedModuleForGrading || ""}
-                              onValueChange={(value) => setSelectedModuleForGrading(value === "" ? null : value)}
+                              onValueChange={(value) => {
+                                setSelectedModuleForGrading(value === "" ? null : value);
+                                setStudentsForGrading([]);
+                              }}
                             >
                               <SelectTrigger id="module-select-grading">
                                 <SelectValue placeholder="Select a module" />
@@ -777,21 +867,87 @@ export default function DashboardPage() {
                             </Select>
                           </div>
                         ) : (
-                          <p className="text-sm text-muted-foreground">No modules found taught by you in this group, or schedule data is still loading.</p>
+                          <p className="text-sm text-muted-foreground">No modules found taught by you in this group.</p>
                         )}
 
                         {selectedModuleForGrading && (
                           <div className="mt-6 pt-4 border-t">
                             <h3 className="text-lg font-semibold text-foreground mb-3 flex items-center">
-                              <BookOpen className="mr-2 h-5 w-5 text-primary" />
+                              <ClipboardEdit className="mr-2 h-5 w-5 text-primary" />
                               Grade Entry for <span className="text-primary ml-1">{selectedModuleForGrading}</span>
                             </h3>
-                            <p className="text-muted-foreground mb-4">
-                              Student list and grade entry form will appear here. This functionality is under development.
-                            </p>
-                            <Button disabled>
-                              <ClipboardEdit className="mr-2 h-4 w-4"/> View Students & Enter Grades (Coming Soon)
-                            </Button>
+                            {isLoadingStudentsForGrading ? (
+                                <div className="flex items-center justify-center py-8">
+                                    <Loader2 className="mr-2 h-8 w-8 animate-spin text-primary"/>
+                                    <p className="text-muted-foreground">Loading students for {selectedGroupForGrading.name}...</p>
+                                </div>
+                            ) : studentsForGrading.length === 0 ? (
+                                <p className="text-muted-foreground text-center py-4">No students found in this group.</p>
+                            ) : (
+                                <div className="space-y-4">
+                                  <ScrollArea className="h-[400px] pr-3">
+                                      {studentsForGrading.map((student) => (
+                                          <Card key={student.studentId} className="p-4 mb-3">
+                                              <CardTitle className="text-md mb-3 flex items-center">
+                                                <UsersIcon className="mr-2 h-5 w-5 text-muted-foreground" /> 
+                                                {student.studentFullName}
+                                              </CardTitle>
+                                              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
+                                                  <div className="space-y-1">
+                                                      <Label htmlFor={`ap-${student.studentId}`}>Attendance & Participation (Max: 8)</Label>
+                                                      <Input 
+                                                          type="number" 
+                                                          id={`ap-${student.studentId}`} 
+                                                          value={student.attendanceParticipationScore}
+                                                          onChange={(e) => handleGradeChange(student.studentId, 'attendanceParticipationScore', e.target.value)}
+                                                          min="0" max="8"
+                                                          placeholder="Score /8"
+                                                      />
+                                                  </div>
+                                                  <div className="space-y-1">
+                                                      <Label htmlFor={`quiz-${student.studentId}`}>Quiz (Max: 12)</Label>
+                                                      <Input 
+                                                          type="number" 
+                                                          id={`quiz-${student.studentId}`} 
+                                                          value={student.quizScore}
+                                                          onChange={(e) => handleGradeChange(student.studentId, 'quizScore', e.target.value)}
+                                                          min="0" max="12"
+                                                          placeholder="Score /12"
+                                                      />
+                                                  </div>
+                                                  <div className="space-y-1">
+                                                      <Label htmlFor={`td-${student.studentId}`}>TD Score (A&P + Quiz, Max: 20)</Label>
+                                                      <Input 
+                                                          type="number" 
+                                                          id={`td-${student.studentId}`} 
+                                                          value={student.tdScore} 
+                                                          readOnly 
+                                                          disabled
+                                                          className="bg-muted/50"
+                                                      />
+                                                  </div>
+                                                  <div className="space-y-1">
+                                                      <Label htmlFor={`test-${student.studentId}`}>Test (Max: 20)</Label>
+                                                      <Input 
+                                                          type="number" 
+                                                          id={`test-${student.studentId}`} 
+                                                          value={student.testScore}
+                                                          onChange={(e) => handleGradeChange(student.studentId, 'testScore', e.target.value)}
+                                                          min="0" max="20"
+                                                          placeholder="Score /20"
+                                                      />
+                                                  </div>
+                                              </div>
+                                          </Card>
+                                      ))}
+                                  </ScrollArea>
+                                  <div className="mt-6 flex justify-end">
+                                      <Button disabled>
+                                          <ClipboardEdit className="mr-2 h-4 w-4"/> Save All Grades (Coming Soon)
+                                      </Button>
+                                  </div>
+                                </div>
+                            )}
                           </div>
                         )}
                         {!selectedModuleForGrading && selectedGroupForGrading && availableModulesForSelectedGroup.length > 0 && !isLoadingModulesForGroup && (
@@ -1004,4 +1160,3 @@ export default function DashboardPage() {
     </div>
   );
 }
-

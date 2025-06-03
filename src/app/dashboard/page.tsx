@@ -12,7 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter }
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogClose, DialogFooter } from "@/components/ui/dialog";
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, AlertTriangle, LogOut, CalendarDays, ChevronLeft, ChevronRight, Info, ClipboardEdit, ListChecks, CheckSquare, BookOpen, Users as UsersIcon, AlertCircleIcon } from 'lucide-react';
+import { Loader2, AlertTriangle, LogOut, CalendarDays, ChevronLeft, ChevronRight, Info, ClipboardEdit, ListChecks, CheckSquare, BookOpen, Users as UsersIcon, AlertCircleIcon, PercentCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
@@ -91,10 +91,11 @@ interface AttendanceRecord {
 interface StudentGradeEntry {
   studentId: string;
   studentFullName: string;
-  attendanceParticipationScore: string;
-  quizScore: string;
-  tdScore: number;
-  testScore: string;
+  attendanceParticipationScore: string; // Stored as string for input control
+  quizScore: string; // Stored as string for input control
+  tdScore: number; // Calculated, stored as number
+  testScore: string; // Stored as string for input control
+  moduleTotal: number; // Calculated, stored as number
   tdError?: string;
   originalGradeDocId?: string;
   isModified?: boolean;
@@ -109,6 +110,7 @@ interface GradeDocument {
   quiz: number;
   TD: number;
   test: number;
+  moduleTotal: number;
   createdAt?: any; // serverTimestamp on create
   updatedAt: any; // serverTimestamp on create/update
 }
@@ -216,7 +218,6 @@ export default function DashboardPage() {
           if (userDocSnap.exists()) {
             const fetchedUserData = { uid: user.uid, ...userDocSnap.data() } as UserData;
             setUserData(fetchedUserData);
-            console.log("User Data Fetched:", fetchedUserData); 
             
             if (fetchedUserData.role === 'Student' && !fetchedUserData.assignedGroupId) {
               setDisplayMessage('Please wait until the Admin assigns you to a group/program.');
@@ -444,7 +445,6 @@ export default function DashboardPage() {
       setIsLoadingStudentsForGrading(true);
       setStudentsForGrading([]);
       try {
-        // Fetch students in the group
         const studentsQuery = query(
           collection(db, "users"),
           where("assignedGroupId", "==", selectedGroupForGrading.id),
@@ -462,17 +462,17 @@ export default function DashboardPage() {
             quizScore: '',
             tdScore: 0,
             testScore: '',
+            moduleTotal: 0,
             isModified: false,
           } as StudentGradeEntry;
         });
 
-        // Fetch existing grades for these students, this group, module, and teacher
         const gradesQuery = query(
           collection(db, "grades"),
           where("groupId", "==", selectedGroupForGrading.id),
           where("moduleName", "==", selectedModuleForGrading.toUpperCase()),
           where("teacherId", "==", currentUser.uid),
-          where("studentId", "in", studentList.length > 0 ? studentList.map(s => s.studentId) : ["dummyIdToPreventEmptyInError"]) // "in" query needs non-empty array
+          where("studentId", "in", studentList.length > 0 ? studentList.map(s => s.studentId) : ["dummyIdToPreventEmptyInError"])
         );
         const gradesSnap = await getDocs(gradesQuery);
         const existingGradesMap = new Map<string, {data: GradeDocument, id: string}>();
@@ -483,14 +483,17 @@ export default function DashboardPage() {
         const studentsWithPopulatedGrades = studentList.map(student => {
           const existingGrade = existingGradesMap.get(student.studentId);
           if (existingGrade) {
+            const testScore = existingGrade.data.test ?? 0;
+            const tdScore = existingGrade.data.TD ?? 0;
             return {
               ...student,
               attendanceParticipationScore: String(existingGrade.data.attendanceParticipation ?? ''),
               quizScore: String(existingGrade.data.quiz ?? ''),
-              tdScore: existingGrade.data.TD ?? 0,
-              testScore: String(existingGrade.data.test ?? ''),
+              tdScore: tdScore,
+              testScore: String(testScore),
+              moduleTotal: parseFloat(((testScore * 0.6) + (tdScore * 0.4)).toFixed(2)),
               originalGradeDocId: existingGrade.id,
-              isModified: false, // Initially not modified
+              isModified: false, 
             };
           }
           return student;
@@ -573,7 +576,7 @@ export default function DashboardPage() {
             const attendanceRecordsQuery = query(
                 collection(db, 'attendances'), 
                 where('classInstanceId', '==', classInstanceIdGenerated),
-                where('teacherId', '==', currentUser.uid)
+                where('teacherId', '==', currentUser.uid) 
             );
             const attendanceRecordsSnap = await getDocs(attendanceRecordsQuery);
             const existingRecordsMap = new Map<string, AttendanceRecord>();
@@ -695,35 +698,34 @@ export default function DashboardPage() {
       prevStudents.map(student => {
         if (student.studentId === studentId) {
           let numericValue = parseFloat(value);
-          const updatedStudent = { ...student, isModified: true, tdError: undefined }; // Clear previous TD error on any change
+          const updatedStudent = { ...student, isModified: true, tdError: undefined };
 
-          // Ensure string value in state for controlled input, but use numeric for validation
           let stringValue = value; 
 
           if (field === 'attendanceParticipationScore') {
-            if (isNaN(numericValue)) numericValue = 0;
-            numericValue = Math.max(0, Math.min(8, numericValue));
-            stringValue = value === '' ? '' : String(numericValue);
+            if (isNaN(numericValue)) numericValue = 0; else numericValue = Math.max(0, Math.min(8, numericValue));
+            stringValue = value === '' ? '' : String(numericValue); // Keep empty string if user deletes input
             updatedStudent.attendanceParticipationScore = stringValue;
           } else if (field === 'quizScore') {
-            if (isNaN(numericValue)) numericValue = 0;
-            numericValue = Math.max(0, Math.min(12, numericValue));
+            if (isNaN(numericValue)) numericValue = 0; else numericValue = Math.max(0, Math.min(12, numericValue));
             stringValue = value === '' ? '' : String(numericValue);
             updatedStudent.quizScore = stringValue;
           } else if (field === 'testScore') {
-            if (isNaN(numericValue)) numericValue = 0;
-            numericValue = Math.max(0, Math.min(20, numericValue));
+            if (isNaN(numericValue)) numericValue = 0; else numericValue = Math.max(0, Math.min(20, numericValue));
             stringValue = value === '' ? '' : String(numericValue);
             updatedStudent.testScore = stringValue;
           }
           
           const apScoreNum = parseFloat(updatedStudent.attendanceParticipationScore) || 0;
           const qScoreNum = parseFloat(updatedStudent.quizScore) || 0;
-          updatedStudent.tdScore = Math.min(20, apScoreNum + qScoreNum); // TD is always capped at 20
+          updatedStudent.tdScore = Math.min(20, apScoreNum + qScoreNum);
 
           if (apScoreNum + qScoreNum > 20) {
-            updatedStudent.tdError = "Total TD (A&P + Quiz) cannot exceed 20. Please adjust scores.";
+            updatedStudent.tdError = "Total TD cannot exceed 20.";
           }
+          
+          const currentTestScoreNum = parseFloat(updatedStudent.testScore) || 0;
+          updatedStudent.moduleTotal = parseFloat(((currentTestScoreNum * 0.6) + (updatedStudent.tdScore * 0.4)).toFixed(2));
           
           return updatedStudent;
         }
@@ -749,22 +751,23 @@ export default function DashboardPage() {
 
     try {
       studentsForGrading.forEach(student => {
-        if (!student.isModified) return; // Only save modified or new entries
+        if (!student.isModified && student.originalGradeDocId) return; 
 
         const ap = parseFloat(student.attendanceParticipationScore) || 0;
         const quiz = parseFloat(student.quizScore) || 0;
         const test = parseFloat(student.testScore) || 0;
-        const td = parseFloat(student.tdScore.toString()) || 0; // tdScore is already calculated
-
-        const gradeData: Partial<GradeDocument> & { updatedAt: any } = { // Use Partial for creation fields
+        // student.tdScore and student.moduleTotal are already numbers
+        
+        const gradeData: Omit<GradeDocument, 'createdAt'> & { createdAt?: any, updatedAt: any } = {
           studentId: student.studentId,
           groupId: selectedGroupForGrading.id,
           moduleName: selectedModuleForGrading.toUpperCase(),
           teacherId: currentUser.uid,
           attendanceParticipation: ap,
           quiz: quiz,
-          TD: td,
+          TD: student.tdScore,
           test: test,
+          moduleTotal: student.moduleTotal,
           updatedAt: serverTimestamp(),
         };
 
@@ -773,27 +776,18 @@ export default function DashboardPage() {
           docRef = doc(db, "grades", student.originalGradeDocId);
           batch.update(docRef, gradeData);
         } else {
-          // Create a new doc ID or use a consistent one
           const newGradeDocId = `${student.studentId}_${selectedGroupForGrading.id}_${selectedModuleForGrading.toUpperCase()}_${currentUser.uid}`;
           docRef = doc(db, "grades", newGradeDocId);
-          gradeData.createdAt = serverTimestamp(); // Add createdAt only for new documents
-          batch.set(docRef, gradeData as GradeDocument); // Cast to full GradeDocument for set
+          gradeData.createdAt = serverTimestamp();
+          batch.set(docRef, gradeData as GradeDocument);
         }
       });
 
       await batch.commit();
       toast({ title: "Success", description: "Grades saved successfully." });
       
-      // Reset isModified flags and potentially update originalGradeDocId for new entries
-      setStudentsForGrading(prev => prev.map(s => ({
-          ...s, 
-          isModified: false, 
-          // If it was a new entry, we'd need to update originalGradeDocId here,
-          // but a full re-fetch (triggered by useEffect on selectedModuleForGrading) is simpler
-        })
-      ));
-      // Trigger re-fetch of grades by briefly clearing and resetting selected module
-      // This is a simple way to refresh the 'originalGradeDocId' and 'isModified'
+      setStudentsForGrading(prev => prev.map(s => ({ ...s, isModified: false })));
+      
       const currentModule = selectedModuleForGrading;
       setSelectedModuleForGrading(null); 
       setTimeout(() => setSelectedModuleForGrading(currentModule), 0);
@@ -988,7 +982,7 @@ export default function DashboardPage() {
                               value={selectedModuleForGrading || ""}
                               onValueChange={(value) => {
                                 setSelectedModuleForGrading(value === "" ? null : value);
-                                setStudentsForGrading([]); // Reset students when module changes
+                                setStudentsForGrading([]);
                               }}
                             >
                               <SelectTrigger id="module-select-grading">
@@ -1029,7 +1023,7 @@ export default function DashboardPage() {
                                                 <UsersIcon className="mr-2 h-5 w-5 text-muted-foreground" /> 
                                                 {student.studentFullName}
                                               </CardTitle>
-                                              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
+                                              <div className="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-4">
                                                   <div className="space-y-1">
                                                       <Label htmlFor={`ap-${student.studentId}`}>Attendance & Participation (Max: 8)</Label>
                                                       <Input 
@@ -1054,7 +1048,7 @@ export default function DashboardPage() {
                                                           disabled={isSavingGrades}
                                                       />
                                                   </div>
-                                                  <div className="space-y-1">
+                                                   <div className="space-y-1">
                                                       <Label htmlFor={`td-${student.studentId}`}>TD Score (A&P + Quiz, Max: 20)</Label>
                                                       <Input 
                                                           type="number" 
@@ -1080,6 +1074,17 @@ export default function DashboardPage() {
                                                           min="0" max="20" step="0.25"
                                                           placeholder="Score /20"
                                                           disabled={isSavingGrades}
+                                                      />
+                                                  </div>
+                                                  <div className="space-y-1 md:col-start-2">
+                                                      <Label htmlFor={`moduletotal-${student.studentId}`}>Module Total (Test*0.6 + TD*0.4)</Label>
+                                                      <Input 
+                                                          type="number" 
+                                                          id={`moduletotal-${student.studentId}`} 
+                                                          value={student.moduleTotal.toFixed(2)} 
+                                                          readOnly 
+                                                          disabled
+                                                          className="bg-muted/50"
                                                       />
                                                   </div>
                                               </div>

@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { collection, query, orderBy, getDocs, where, type Timestamp, doc, onSnapshot, setDoc, deleteDoc } from 'firebase/firestore';
+import { collection, query, orderBy, getDocs, where, type Timestamp, doc, onSnapshot, setDoc, deleteDoc, collectionGroup } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription, CardFooter } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogClose } from "@/components/ui/dialog";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Loader2, BookOpenText, Edit3, Trash2, AlertTriangle } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 import { cn } from '@/lib/utils';
@@ -80,6 +81,7 @@ export default function ProgramManagementPage() {
   const [isDeletingSlot, setIsDeletingSlot] = useState(false);
   
   const [slotExistsInModal, setSlotExistsInModal] = useState(false);
+  const [modalConflictError, setModalConflictError] = useState<string | null>(null);
 
 
   useEffect(() => {
@@ -228,7 +230,8 @@ export default function ProgramManagementPage() {
 
   const handleSlotClick = (day: string, time: string) => {
     setCurrentEditingSlot({ day, time });
-    fetchTeachers(); // Ensure teachers are loaded
+    fetchTeachers(); 
+    setModalConflictError(null);
 
     const slotDocId = createSlotDocId(day, time);
     const existingSlot = groupSchedule.find(s => s.id === slotDocId);
@@ -255,26 +258,61 @@ export default function ProgramManagementPage() {
     }
     
     setIsSavingSlot(true);
-    const slotDocId = createSlotDocId(currentEditingSlot.day, currentEditingSlot.time);
-    const slotData: ScheduleSlotData = {
-      day: currentEditingSlot.day,
-      time: currentEditingSlot.time,
-      teacherId: modalTeacherId,
-      teacherName: availableTeachers.find(t => t.uid === modalTeacherId)?.fullName || 'N/A',
-      moduleName: modalModuleName.trim(),
-      roomHall: modalRoomHall.trim(),
-      groupId: selectedGroupDetails.id,
-      groupName: selectedGroupDetails.name,
-    };
+    setModalConflictError(null);
 
     try {
+      // Teacher Conflict Check
+      const conflictQuery = query(
+        collectionGroup(db, 'schedule'),
+        where('teacherId', '==', modalTeacherId),
+        where('day', '==', currentEditingSlot.day),
+        where('time', '==', currentEditingSlot.time)
+      );
+      const conflictSnapshot = await getDocs(conflictQuery);
+      let conflictFound = null;
+
+      conflictSnapshot.forEach(docSnap => {
+        const conflictingSlot = docSnap.data() as ScheduleSlotData;
+        if (conflictingSlot.groupId !== selectedGroupDetails.id) {
+          conflictFound = conflictingSlot;
+        }
+      });
+
+      if (conflictFound) {
+        const teacherName = availableTeachers.find(t => t.uid === modalTeacherId)?.fullName || 'The selected teacher';
+        const conflictMsg = `Error: ${teacherName} is already assigned to module "${conflictFound.moduleName}" in group "${conflictFound.groupName}" at this time. Please select another teacher or time slot.`;
+        setModalConflictError(conflictMsg);
+        toast({ variant: "destructive", title: "Scheduling Conflict", description: conflictMsg, duration: 7000 });
+        setIsSavingSlot(false);
+        return;
+      }
+
+      // No conflict, proceed to save
+      const slotDocId = createSlotDocId(currentEditingSlot.day, currentEditingSlot.time);
+      const slotData: ScheduleSlotData = {
+        day: currentEditingSlot.day,
+        time: currentEditingSlot.time,
+        teacherId: modalTeacherId,
+        teacherName: availableTeachers.find(t => t.uid === modalTeacherId)?.fullName || 'N/A',
+        moduleName: modalModuleName.trim(),
+        roomHall: modalRoomHall.trim(),
+        groupId: selectedGroupDetails.id,
+        groupName: selectedGroupDetails.name,
+      };
+
       const slotDocRef = doc(db, "departments", selectedGroupDetails.departmentId, "years", selectedGroupDetails.yearId, "specialities", selectedGroupDetails.specialityId, "groups", selectedGroupDetails.id, "schedule", slotDocId);
-      await setDoc(slotDocRef, slotData); // setDoc will create or overwrite
+      await setDoc(slotDocRef, slotData); 
       toast({ title: "Success", description: "Class slot details saved." });
       setShowSlotModal(false);
-    } catch (error) {
+
+    } catch (error: any) {
         console.error("Error saving slot details:", error);
-        toast({ variant: "destructive", title: "Save Error", description: "Could not save class slot details." });
+        let description = "Could not save class slot details.";
+        if (error.message && error.message.includes("indexes")) {
+            description += " A Firestore index might be missing. Check the console for details.";
+        }
+        toast({ variant: "destructive", title: "Save Error", description });
+        setModalConflictError("An unexpected error occurred while trying to save.");
     } finally {
         setIsSavingSlot(false);
     }
@@ -319,6 +357,7 @@ export default function ProgramManagementPage() {
   };
   
   const isProcessing = isSavingSlot || isDeletingSlot;
+  const anyDropdownLoading = isLoadingDeps || isLoadingYears || isLoadingSpecs || isLoadingGroups;
 
   return (
     <div className="space-y-6">
@@ -334,28 +373,28 @@ export default function ProgramManagementPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 p-4 border rounded-md shadow-sm">
             <div className="space-y-2">
               <Label htmlFor="department-select">Department</Label>
-              <Select value={selectedDepartmentId} onValueChange={setSelectedDepartmentId} disabled={isLoadingDeps || isProcessing}>
+              <Select value={selectedDepartmentId} onValueChange={setSelectedDepartmentId} disabled={anyDropdownLoading || isProcessing}>
                 <SelectTrigger id="department-select"><SelectValue placeholder={isLoadingDeps ? "Loading..." : "Select Department"} /></SelectTrigger>
                 <SelectContent>{departments.map(dep => <SelectItem key={dep.id} value={dep.id}>{dep.name}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             <div className="space-y-2">
               <Label htmlFor="year-select">Year</Label>
-              <Select value={selectedYearId} onValueChange={setSelectedYearId} disabled={!selectedDepartmentId || isLoadingYears || isProcessing}>
+              <Select value={selectedYearId} onValueChange={setSelectedYearId} disabled={!selectedDepartmentId || anyDropdownLoading || isProcessing}>
                 <SelectTrigger id="year-select" className={!selectedDepartmentId ? "opacity-50 cursor-not-allowed" : ""}><SelectValue placeholder={isLoadingYears ? "Loading..." : "Select Year"} /></SelectTrigger>
                 <SelectContent>{years.map(year => <SelectItem key={year.id} value={year.id}>{year.name}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             <div className="space-y-2">
               <Label htmlFor="speciality-select">Speciality</Label>
-              <Select value={selectedSpecialityId} onValueChange={setSelectedSpecialityId} disabled={!selectedYearId || isLoadingSpecs || isProcessing}>
+              <Select value={selectedSpecialityId} onValueChange={setSelectedSpecialityId} disabled={!selectedYearId || anyDropdownLoading || isProcessing}>
                 <SelectTrigger id="speciality-select" className={!selectedYearId ? "opacity-50 cursor-not-allowed" : ""}><SelectValue placeholder={isLoadingSpecs ? "Loading..." : "Select Speciality"} /></SelectTrigger>
                 <SelectContent>{specialities.map(spec => <SelectItem key={spec.id} value={spec.id}>{spec.name}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             <div className="space-y-2">
               <Label htmlFor="group-select">Group</Label>
-              <Select value={selectedGroupId} onValueChange={setSelectedGroupId} disabled={!selectedSpecialityId || isLoadingGroups || isProcessing}>
+              <Select value={selectedGroupId} onValueChange={setSelectedGroupId} disabled={!selectedSpecialityId || anyDropdownLoading || isProcessing}>
                 <SelectTrigger id="group-select" className={!selectedSpecialityId ? "opacity-50 cursor-not-allowed" : ""}><SelectValue placeholder={isLoadingGroups ? "Loading..." : "Select Group"} /></SelectTrigger>
                 <SelectContent>{groups.map(group => <SelectItem key={group.id} value={group.id}>{group.name}</SelectItem>)}</SelectContent>
               </Select>
@@ -367,8 +406,8 @@ export default function ProgramManagementPage() {
               <p className="text-sm text-muted-foreground">Path: {getPath()}</p>
             </div>
           )}
-           {!selectedGroupId && selectedSpecialityId && !isLoadingGroups && groups.length === 0 && (<p className="text-muted-foreground text-center py-4">No groups for selected speciality. Add groups in 'Departments' section.</p>)}
-           {!selectedGroupId && selectedSpecialityId && !isLoadingGroups && groups.length > 0 && (<p className="text-muted-foreground text-center py-4">Please select a group to manage its program.</p>)}
+           {!selectedGroupId && selectedSpecialityId && !anyDropdownLoading && groups.length === 0 && (<p className="text-muted-foreground text-center py-4">No groups for selected speciality. Add groups in 'Departments' section.</p>)}
+           {!selectedGroupId && selectedSpecialityId && !anyDropdownLoading && groups.length > 0 && (<p className="text-muted-foreground text-center py-4">Please select a group to manage its program.</p>)}
         </CardContent>
       </Card>
 
@@ -411,7 +450,10 @@ export default function ProgramManagementPage() {
         </Card>
       )}
 
-      <Dialog open={showSlotModal} onOpenChange={setShowSlotModal}>
+      <Dialog open={showSlotModal} onOpenChange={(isOpen) => {
+          setShowSlotModal(isOpen);
+          if (!isOpen) setModalConflictError(null); // Clear error when modal closes
+      }}>
         <DialogContent className="sm:max-w-[480px]">
           <DialogHeader>
             <DialogTitle>{slotExistsInModal ? "Edit" : "Set"} Class Details</DialogTitle>
@@ -420,9 +462,15 @@ export default function ProgramManagementPage() {
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
+            {modalConflictError && (
+              <Alert variant="destructive">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertDescription>{modalConflictError}</AlertDescription>
+              </Alert>
+            )}
             <div className="space-y-2">
               <Label htmlFor="teacher-select-modal">Assigned Teacher</Label>
-              <Select value={modalTeacherId} onValueChange={setModalTeacherId} disabled={isLoadingTeachers || isProcessing}>
+              <Select value={modalTeacherId} onValueChange={(value) => {setModalTeacherId(value); setModalConflictError(null);}} disabled={isLoadingTeachers || isProcessing}>
                 <SelectTrigger id="teacher-select-modal"><SelectValue placeholder={isLoadingTeachers ? "Loading teachers..." : "Select Teacher"} /></SelectTrigger>
                 <SelectContent>
                   {availableTeachers.map(teacher => (<SelectItem key={teacher.uid} value={teacher.uid}>{teacher.fullName}</SelectItem>))}
@@ -432,11 +480,11 @@ export default function ProgramManagementPage() {
             </div>
             <div className="space-y-2">
                 <Label htmlFor="module-name-modal">Module Name</Label>
-                <Input id="module-name-modal" value={modalModuleName} onChange={(e) => setModalModuleName(e.target.value)} placeholder="e.g., Introduction to AI" disabled={isProcessing}/>
+                <Input id="module-name-modal" value={modalModuleName} onChange={(e) => {setModalModuleName(e.target.value); setModalConflictError(null);}} placeholder="e.g., Introduction to AI" disabled={isProcessing}/>
             </div>
             <div className="space-y-2">
                 <Label htmlFor="room-hall-modal">Room / Hall</Label>
-                <Input id="room-hall-modal" value={modalRoomHall} onChange={(e) => setModalRoomHall(e.target.value)} placeholder="e.g., Amphitheater C" disabled={isProcessing}/>
+                <Input id="room-hall-modal" value={modalRoomHall} onChange={(e) => {setModalRoomHall(e.target.value); setModalConflictError(null);}} placeholder="e.g., Amphitheater C" disabled={isProcessing}/>
             </div>
           </div>
           <DialogFooter className="sm:justify-between">
@@ -461,6 +509,8 @@ export default function ProgramManagementPage() {
     </div>
   );
 }
+    
+
     
 
     

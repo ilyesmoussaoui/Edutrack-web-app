@@ -501,13 +501,14 @@ export default function DashboardPage() {
           if (existingGrade) {
             const testScoreNum = existingGrade.data.test ?? 0;
             const tdScoreNum = existingGrade.data.TD ?? 0;
+            const moduleTotalNum = existingGrade.data.moduleTotal ?? parseFloat(((testScoreNum * 0.6) + (tdScoreNum * 0.4)).toFixed(2))
             return {
               ...student,
               attendanceParticipationScore: String(existingGrade.data.attendanceParticipation ?? ''),
               quizScore: String(existingGrade.data.quiz ?? ''),
               tdScore: tdScoreNum,
               testScore: String(testScoreNum),
-              moduleTotal: parseFloat(((testScoreNum * 0.6) + (tdScoreNum * 0.4)).toFixed(2)),
+              moduleTotal: moduleTotalNum,
               originalGradeDocId: existingGrade.id,
               isModified: false, 
             };
@@ -769,16 +770,16 @@ export default function DashboardPage() {
           let stringValue = value; 
 
           if (field === 'attendanceParticipationScore') {
-            if (isNaN(numericValue)) numericValue = 0; else numericValue = Math.max(0, Math.min(8, numericValue));
-            stringValue = value === '' ? '' : String(numericValue); 
+            if (isNaN(numericValue)) { /* allow empty string */ } else numericValue = Math.max(0, Math.min(8, numericValue));
+            stringValue = value === '' ? '' : (isNaN(numericValue) ? student.attendanceParticipationScore : String(numericValue));
             updatedStudent.attendanceParticipationScore = stringValue;
           } else if (field === 'quizScore') {
-            if (isNaN(numericValue)) numericValue = 0; else numericValue = Math.max(0, Math.min(12, numericValue));
-            stringValue = value === '' ? '' : String(numericValue);
+            if (isNaN(numericValue)) { /* allow empty string */ } else numericValue = Math.max(0, Math.min(12, numericValue));
+            stringValue = value === '' ? '' : (isNaN(numericValue) ? student.quizScore : String(numericValue));
             updatedStudent.quizScore = stringValue;
           } else if (field === 'testScore') {
-            if (isNaN(numericValue)) numericValue = 0; else numericValue = Math.max(0, Math.min(20, numericValue));
-            stringValue = value === '' ? '' : String(numericValue);
+            if (isNaN(numericValue)) { /* allow empty string */ } else numericValue = Math.max(0, Math.min(20, numericValue));
+            stringValue = value === '' ? '' : (isNaN(numericValue) ? student.testScore : String(numericValue));
             updatedStudent.testScore = stringValue;
           }
           
@@ -841,7 +842,7 @@ export default function DashboardPage() {
           docRef = doc(db, "grades", student.originalGradeDocId);
           batch.update(docRef, gradeData);
         } else {
-          const newGradeDocId = `${student.studentId}_${selectedGroupForGrading.id}_${selectedModuleForGrading.toUpperCase()}_${currentUser.uid}`;
+          const newGradeDocId = `${student.studentId}_${selectedGroupForGrading!.id}_${selectedModuleForGrading!.toUpperCase()}_${currentUser!.uid}`;
           docRef = doc(db, "grades", newGradeDocId);
           gradeData.createdAt = serverTimestamp();
           batch.set(docRef, gradeData as GradeDocument);
@@ -1303,10 +1304,16 @@ export default function DashboardPage() {
                                                         <p className="text-sm text-muted-foreground">Taught by: {moduleGradeInfo.teacherName}</p>
                                                     </div>
                                                     {moduleGradeInfo.grade ? (
-                                                         <div className="text-right">
-                                                            <p className="text-xl font-bold text-foreground">{moduleGradeInfo.grade.moduleTotal.toFixed(2)} <span className="text-xs text-muted-foreground">/ 20</span></p>
-                                                            <p className="text-xs text-muted-foreground">Module Total</p>
-                                                        </div>
+                                                        typeof moduleGradeInfo.grade.moduleTotal === 'number' ? (
+                                                             <div className="text-right">
+                                                                <p className="text-xl font-bold text-foreground">{moduleGradeInfo.grade.moduleTotal.toFixed(2)} <span className="text-xs text-muted-foreground">/ 20</span></p>
+                                                                <p className="text-xs text-muted-foreground">Module Total</p>
+                                                            </div>
+                                                        ) : (
+                                                            <div className="text-right">
+                                                                <p className="text-sm text-muted-foreground italic">Total grade not available</p>
+                                                            </div>
+                                                        )
                                                     ) : (
                                                         <p className="text-sm text-muted-foreground italic">Grades not yet recorded</p>
                                                     )}
@@ -1475,24 +1482,29 @@ export default function DashboardPage() {
                   <>
                     <div className="flex justify-between items-center">
                       <span className="text-muted-foreground">Attendance &amp; Participation:</span>
-                      <span className="font-medium text-foreground">{selectedModuleForGradeDetails.grade.attendanceParticipation.toFixed(2)} / 8.00</span>
+                      <span className="font-medium text-foreground">{(selectedModuleForGradeDetails.grade.attendanceParticipation ?? 0).toFixed(2)} / 8.00</span>
                     </div>
                     <div className="flex justify-between items-center">
                       <span className="text-muted-foreground">Quiz:</span>
-                      <span className="font-medium text-foreground">{selectedModuleForGradeDetails.grade.quiz.toFixed(2)} / 12.00</span>
+                      <span className="font-medium text-foreground">{(selectedModuleForGradeDetails.grade.quiz ?? 0).toFixed(2)} / 12.00</span>
                     </div>
                     <div className="flex justify-between items-center">
                       <span className="text-muted-foreground">TD Score (Calculated):</span>
-                      <span className="font-medium text-foreground">{selectedModuleForGradeDetails.grade.TD.toFixed(2)} / 20.00</span>
+                      <span className="font-medium text-foreground">{(selectedModuleForGradeDetails.grade.TD ?? 0).toFixed(2)} / 20.00</span>
                     </div>
                     <div className="flex justify-between items-center">
                       <span className="text-muted-foreground">Test Score:</span>
-                      <span className="font-medium text-foreground">{selectedModuleForGradeDetails.grade.test.toFixed(2)} / 20.00</span>
+                      <span className="font-medium text-foreground">{(selectedModuleForGradeDetails.grade.test ?? 0).toFixed(2)} / 20.00</span>
                     </div>
                     <div className="border-t my-2"></div>
                     <div className="flex justify-between items-center text-lg">
                       <strong className="text-primary">Module Total:</strong>
-                      <strong className="text-primary">{selectedModuleForGradeDetails.grade.moduleTotal.toFixed(2)} / 20.00</strong>
+                      <strong className="text-primary">
+                        {typeof selectedModuleForGradeDetails.grade.moduleTotal === 'number' 
+                          ? selectedModuleForGradeDetails.grade.moduleTotal.toFixed(2) 
+                          : 'N/A'}{' '}
+                        / 20.00
+                      </strong>
                     </div>
                   </>
                 ) : (

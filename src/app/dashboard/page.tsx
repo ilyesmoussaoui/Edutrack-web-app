@@ -4,7 +4,7 @@
 import React, { useEffect, useState, useMemo, type ChangeEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { onAuthStateChanged, signOut, type User as FirebaseUser } from 'firebase/auth';
-import { doc, getDoc, collectionGroup, query, where, onSnapshot, collection, serverTimestamp, setDoc, Timestamp, orderBy, getDocs, deleteDoc } from 'firebase/firestore';
+import { doc, getDoc, collectionGroup, query, where, onSnapshot, collection, serverTimestamp, setDoc, Timestamp, orderBy, getDocs, deleteDoc, writeBatch } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase'; 
 import { AppHeader } from '@/components/layout/app-header';
 import { Button } from '@/components/ui/button';
@@ -12,7 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter }
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogClose, DialogFooter } from "@/components/ui/dialog";
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, AlertTriangle, LogOut, CalendarDays, ChevronLeft, ChevronRight, Info, ClipboardEdit, ListChecks, CheckSquare, BookOpen, Users as UsersIcon } from 'lucide-react';
+import { Loader2, AlertTriangle, LogOut, CalendarDays, ChevronLeft, ChevronRight, Info, ClipboardEdit, ListChecks, CheckSquare, BookOpen, Users as UsersIcon, AlertCircleIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
@@ -91,10 +91,26 @@ interface AttendanceRecord {
 interface StudentGradeEntry {
   studentId: string;
   studentFullName: string;
-  attendanceParticipationScore: string; // Keep as string for controlled input
-  quizScore: string;                  // Keep as string for controlled input
-  tdScore: number;                     // Calculated, always number
-  testScore: string;                   // Keep as string for controlled input
+  attendanceParticipationScore: string;
+  quizScore: string;
+  tdScore: number;
+  testScore: string;
+  tdError?: string;
+  originalGradeDocId?: string;
+  isModified?: boolean;
+}
+
+interface GradeDocument {
+  studentId: string;
+  groupId: string;
+  moduleName: string; // Uppercase
+  teacherId: string;
+  attendanceParticipation: number;
+  quiz: number;
+  TD: number;
+  test: number;
+  createdAt?: any; // serverTimestamp on create
+  updatedAt: any; // serverTimestamp on create/update
 }
 
 
@@ -170,6 +186,7 @@ export default function DashboardPage() {
   const [selectedModuleForGrading, setSelectedModuleForGrading] = useState<string | null>(null);
   const [studentsForGrading, setStudentsForGrading] = useState<StudentGradeEntry[]>([]);
   const [isLoadingStudentsForGrading, setIsLoadingStudentsForGrading] = useState(false);
+  const [isSavingGrades, setIsSavingGrades] = useState(false);
 
 
   useEffect(() => {
@@ -411,7 +428,7 @@ export default function DashboardPage() {
     setAvailableModulesForSelectedGroup(sortedModules);
   
     if (selectedModuleForGrading && !sortedModules.includes(selectedModuleForGrading)) {
-      setSelectedModuleForGrading(null);
+      setSelectedModuleForGrading(null); // Reset if current module not in new list
     }
   
     setIsLoadingModulesForGroup(false);
@@ -423,10 +440,11 @@ export default function DashboardPage() {
       return;
     }
 
-    const fetchStudents = async () => {
+    const fetchStudentsAndGrades = async () => {
       setIsLoadingStudentsForGrading(true);
       setStudentsForGrading([]);
       try {
+        // Fetch students in the group
         const studentsQuery = query(
           collection(db, "users"),
           where("assignedGroupId", "==", selectedGroupForGrading.id),
@@ -434,7 +452,8 @@ export default function DashboardPage() {
           orderBy("fullName")
         );
         const studentDocsSnap = await getDocs(studentsQuery);
-        const fetchedStudents = studentDocsSnap.docs.map(sDoc => {
+        
+        const studentList = studentDocsSnap.docs.map(sDoc => {
           const studentData = sDoc.data() as StudentFromUserDoc;
           return {
             studentId: sDoc.id,
@@ -443,22 +462,55 @@ export default function DashboardPage() {
             quizScore: '',
             tdScore: 0,
             testScore: '',
+            isModified: false,
           } as StudentGradeEntry;
         });
-        setStudentsForGrading(fetchedStudents);
+
+        // Fetch existing grades for these students, this group, module, and teacher
+        const gradesQuery = query(
+          collection(db, "grades"),
+          where("groupId", "==", selectedGroupForGrading.id),
+          where("moduleName", "==", selectedModuleForGrading.toUpperCase()),
+          where("teacherId", "==", currentUser.uid),
+          where("studentId", "in", studentList.length > 0 ? studentList.map(s => s.studentId) : ["dummyIdToPreventEmptyInError"]) // "in" query needs non-empty array
+        );
+        const gradesSnap = await getDocs(gradesQuery);
+        const existingGradesMap = new Map<string, {data: GradeDocument, id: string}>();
+        gradesSnap.forEach(gradeDoc => {
+          existingGradesMap.set(gradeDoc.data().studentId, {data: gradeDoc.data() as GradeDocument, id: gradeDoc.id});
+        });
+        
+        const studentsWithPopulatedGrades = studentList.map(student => {
+          const existingGrade = existingGradesMap.get(student.studentId);
+          if (existingGrade) {
+            return {
+              ...student,
+              attendanceParticipationScore: String(existingGrade.data.attendanceParticipation ?? ''),
+              quizScore: String(existingGrade.data.quiz ?? ''),
+              tdScore: existingGrade.data.TD ?? 0,
+              testScore: String(existingGrade.data.test ?? ''),
+              originalGradeDocId: existingGrade.id,
+              isModified: false, // Initially not modified
+            };
+          }
+          return student;
+        });
+
+        setStudentsForGrading(studentsWithPopulatedGrades);
+
       } catch (err: any) {
-        console.error("Error fetching students for grading:", err);
+        console.error("Error fetching students or grades:", err);
         toast({
           variant: "destructive",
-          title: "Student Loading Error",
-          description: `Could not load students for ${selectedGroupForGrading.name}: ${err.message}`,
+          title: "Data Loading Error",
+          description: `Could not load students or grades for ${selectedGroupForGrading.name} / ${selectedModuleForGrading}: ${err.message}`,
         });
       } finally {
         setIsLoadingStudentsForGrading(false);
       }
     };
 
-    fetchStudents();
+    fetchStudentsAndGrades();
   }, [selectedGroupForGrading, selectedModuleForGrading, currentUser, toast]);
 
 
@@ -521,7 +573,7 @@ export default function DashboardPage() {
             const attendanceRecordsQuery = query(
                 collection(db, 'attendances'), 
                 where('classInstanceId', '==', classInstanceIdGenerated),
-                where('teacherId', '==', currentUser.uid) 
+                where('teacherId', '==', currentUser.uid)
             );
             const attendanceRecordsSnap = await getDocs(attendanceRecordsQuery);
             const existingRecordsMap = new Map<string, AttendanceRecord>();
@@ -638,32 +690,40 @@ export default function DashboardPage() {
     }
   };
 
-  const handleGradeChange = (studentId: string, field: keyof Pick<StudentGradeEntry, 'attendanceParticipationScore' | 'quizScore' | 'testScore'>, value: string) => {
+ const handleGradeChange = (studentId: string, field: keyof Pick<StudentGradeEntry, 'attendanceParticipationScore' | 'quizScore' | 'testScore'>, value: string) => {
     setStudentsForGrading(prevStudents =>
       prevStudents.map(student => {
         if (student.studentId === studentId) {
           let numericValue = parseFloat(value);
-          if (isNaN(numericValue)) {
-            numericValue = 0; // Or treat empty string as 0, or keep it as string '' for controlled input
-          }
+          const updatedStudent = { ...student, isModified: true, tdError: undefined }; // Clear previous TD error on any change
 
-          const updatedStudent = { ...student };
+          // Ensure string value in state for controlled input, but use numeric for validation
+          let stringValue = value; 
 
           if (field === 'attendanceParticipationScore') {
+            if (isNaN(numericValue)) numericValue = 0;
             numericValue = Math.max(0, Math.min(8, numericValue));
-            updatedStudent.attendanceParticipationScore = value === '' ? '' : String(numericValue); // Keep as string for input
+            stringValue = value === '' ? '' : String(numericValue);
+            updatedStudent.attendanceParticipationScore = stringValue;
           } else if (field === 'quizScore') {
+            if (isNaN(numericValue)) numericValue = 0;
             numericValue = Math.max(0, Math.min(12, numericValue));
-            updatedStudent.quizScore = value === '' ? '' : String(numericValue); // Keep as string for input
+            stringValue = value === '' ? '' : String(numericValue);
+            updatedStudent.quizScore = stringValue;
           } else if (field === 'testScore') {
+            if (isNaN(numericValue)) numericValue = 0;
             numericValue = Math.max(0, Math.min(20, numericValue));
-            updatedStudent.testScore = value === '' ? '' : String(numericValue); // Keep as string for input
+            stringValue = value === '' ? '' : String(numericValue);
+            updatedStudent.testScore = stringValue;
           }
           
-          // Recalculate TD score
-          const apScore = parseFloat(updatedStudent.attendanceParticipationScore) || 0;
-          const qScore = parseFloat(updatedStudent.quizScore) || 0;
-          updatedStudent.tdScore = Math.min(20, apScore + qScore);
+          const apScoreNum = parseFloat(updatedStudent.attendanceParticipationScore) || 0;
+          const qScoreNum = parseFloat(updatedStudent.quizScore) || 0;
+          updatedStudent.tdScore = Math.min(20, apScoreNum + qScoreNum); // TD is always capped at 20
+
+          if (apScoreNum + qScoreNum > 20) {
+            updatedStudent.tdError = "Total TD (A&P + Quiz) cannot exceed 20. Please adjust scores.";
+          }
           
           return updatedStudent;
         }
@@ -671,6 +731,83 @@ export default function DashboardPage() {
       })
     );
   };
+
+  const handleSaveGrades = async () => {
+    if (!currentUser || !selectedGroupForGrading || !selectedModuleForGrading) {
+      toast({ variant: "destructive", title: "Error", description: "Missing group or module selection." });
+      return;
+    }
+
+    const studentsWithTdErrors = studentsForGrading.filter(s => s.tdError);
+    if (studentsWithTdErrors.length > 0) {
+      toast({ variant: "destructive", title: "Validation Error", description: "Cannot save. One or more students have TD scores exceeding 20. Please correct them."});
+      return;
+    }
+
+    setIsSavingGrades(true);
+    const batch = writeBatch(db);
+
+    try {
+      studentsForGrading.forEach(student => {
+        if (!student.isModified) return; // Only save modified or new entries
+
+        const ap = parseFloat(student.attendanceParticipationScore) || 0;
+        const quiz = parseFloat(student.quizScore) || 0;
+        const test = parseFloat(student.testScore) || 0;
+        const td = parseFloat(student.tdScore.toString()) || 0; // tdScore is already calculated
+
+        const gradeData: Partial<GradeDocument> & { updatedAt: any } = { // Use Partial for creation fields
+          studentId: student.studentId,
+          groupId: selectedGroupForGrading.id,
+          moduleName: selectedModuleForGrading.toUpperCase(),
+          teacherId: currentUser.uid,
+          attendanceParticipation: ap,
+          quiz: quiz,
+          TD: td,
+          test: test,
+          updatedAt: serverTimestamp(),
+        };
+
+        let docRef;
+        if (student.originalGradeDocId) {
+          docRef = doc(db, "grades", student.originalGradeDocId);
+          batch.update(docRef, gradeData);
+        } else {
+          // Create a new doc ID or use a consistent one
+          const newGradeDocId = `${student.studentId}_${selectedGroupForGrading.id}_${selectedModuleForGrading.toUpperCase()}_${currentUser.uid}`;
+          docRef = doc(db, "grades", newGradeDocId);
+          gradeData.createdAt = serverTimestamp(); // Add createdAt only for new documents
+          batch.set(docRef, gradeData as GradeDocument); // Cast to full GradeDocument for set
+        }
+      });
+
+      await batch.commit();
+      toast({ title: "Success", description: "Grades saved successfully." });
+      
+      // Reset isModified flags and potentially update originalGradeDocId for new entries
+      setStudentsForGrading(prev => prev.map(s => ({
+          ...s, 
+          isModified: false, 
+          // If it was a new entry, we'd need to update originalGradeDocId here,
+          // but a full re-fetch (triggered by useEffect on selectedModuleForGrading) is simpler
+        })
+      ));
+      // Trigger re-fetch of grades by briefly clearing and resetting selected module
+      // This is a simple way to refresh the 'originalGradeDocId' and 'isModified'
+      const currentModule = selectedModuleForGrading;
+      setSelectedModuleForGrading(null); 
+      setTimeout(() => setSelectedModuleForGrading(currentModule), 0);
+
+
+    } catch (err: any) {
+      console.error("Error saving grades:", err);
+      toast({ variant: "destructive", title: "Save Error", description: `Could not save grades: ${err.message}` });
+    } finally {
+      setIsSavingGrades(false);
+    }
+  };
+  
+  const canSaveGrades = !isLoadingStudentsForGrading && !isSavingGrades && studentsForGrading.length > 0 && !studentsForGrading.some(s => s.tdError);
 
 
   const mainLoading = isLoadingUser || 
@@ -851,7 +988,7 @@ export default function DashboardPage() {
                               value={selectedModuleForGrading || ""}
                               onValueChange={(value) => {
                                 setSelectedModuleForGrading(value === "" ? null : value);
-                                setStudentsForGrading([]);
+                                setStudentsForGrading([]); // Reset students when module changes
                               }}
                             >
                               <SelectTrigger id="module-select-grading">
@@ -900,8 +1037,9 @@ export default function DashboardPage() {
                                                           id={`ap-${student.studentId}`} 
                                                           value={student.attendanceParticipationScore}
                                                           onChange={(e) => handleGradeChange(student.studentId, 'attendanceParticipationScore', e.target.value)}
-                                                          min="0" max="8"
+                                                          min="0" max="8" step="0.25"
                                                           placeholder="Score /8"
+                                                          disabled={isSavingGrades}
                                                       />
                                                   </div>
                                                   <div className="space-y-1">
@@ -911,8 +1049,9 @@ export default function DashboardPage() {
                                                           id={`quiz-${student.studentId}`} 
                                                           value={student.quizScore}
                                                           onChange={(e) => handleGradeChange(student.studentId, 'quizScore', e.target.value)}
-                                                          min="0" max="12"
+                                                          min="0" max="12" step="0.25"
                                                           placeholder="Score /12"
+                                                          disabled={isSavingGrades}
                                                       />
                                                   </div>
                                                   <div className="space-y-1">
@@ -923,8 +1062,13 @@ export default function DashboardPage() {
                                                           value={student.tdScore} 
                                                           readOnly 
                                                           disabled
-                                                          className="bg-muted/50"
+                                                          className={cn("bg-muted/50", student.tdError && "border-destructive text-destructive focus-visible:ring-destructive")}
                                                       />
+                                                      {student.tdError && (
+                                                          <p className="text-xs text-destructive mt-1 flex items-center">
+                                                              <AlertCircleIcon className="h-3 w-3 mr-1" />{student.tdError}
+                                                          </p>
+                                                      )}
                                                   </div>
                                                   <div className="space-y-1">
                                                       <Label htmlFor={`test-${student.studentId}`}>Test (Max: 20)</Label>
@@ -933,8 +1077,9 @@ export default function DashboardPage() {
                                                           id={`test-${student.studentId}`} 
                                                           value={student.testScore}
                                                           onChange={(e) => handleGradeChange(student.studentId, 'testScore', e.target.value)}
-                                                          min="0" max="20"
+                                                          min="0" max="20" step="0.25"
                                                           placeholder="Score /20"
+                                                          disabled={isSavingGrades}
                                                       />
                                                   </div>
                                               </div>
@@ -942,8 +1087,9 @@ export default function DashboardPage() {
                                       ))}
                                   </ScrollArea>
                                   <div className="mt-6 flex justify-end">
-                                      <Button disabled>
-                                          <ClipboardEdit className="mr-2 h-4 w-4"/> Save All Grades (Coming Soon)
+                                      <Button onClick={handleSaveGrades} disabled={!canSaveGrades}>
+                                          {isSavingGrades ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <ClipboardEdit className="mr-2 h-4 w-4"/>} 
+                                          Save All Grades
                                       </Button>
                                   </div>
                                 </div>
@@ -1160,3 +1306,4 @@ export default function DashboardPage() {
     </div>
   );
 }
+
